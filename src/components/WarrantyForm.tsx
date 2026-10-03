@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileCheck2, FileText } from 'lucide-react';
-import { WarrantyFormData, ProductItemRow } from '../types';
+import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileCheck2, FileText, ChevronDown } from 'lucide-react';
+import { WarrantyFormData, ProductItemRow, PRODUCT_BRAND_OPTIONS } from '../types';
 
 interface WarrantyFormProps {
   formData: WarrantyFormData;
@@ -42,18 +42,12 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
     if (!formData.items || formData.items.length === 0) {
       newErrors.items = 'Please add at least one product item.';
     } else {
-      // Validate that at least the main field is filled
+      // Validate that at least the description field is filled
       const hasValidRow = formData.items.some((item) => {
-        if (isPoCertificate) {
-          return item.productType?.trim();
-        } else {
-          return item.description?.trim() || item.itemCode?.trim();
-        }
+        return item.description?.trim() || item.itemCode?.trim() || item.productType?.trim();
       });
       if (!hasValidRow) {
-        newErrors.items = isPoCertificate
-          ? 'Please enter the Product type for at least one item.'
-          : 'Please enter the Description or Item Code for at least one item.';
+        newErrors.items = 'Please enter the Product Description for at least one item.';
       }
     }
 
@@ -70,56 +64,20 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
   // Switch Letter Type handler
   const handleSelectLetterType = (type: 'declaration' | 'po_certificate') => {
-    if (type === 'po_certificate') {
-      // Prepopulate row format if empty
-      const updatedItems = (formData.items && formData.items.length > 0)
-        ? formData.items.map((it) => ({
-            ...it,
-            productType: it.productType || it.description || 'Switches and Sockets',
-            productBrand: it.productBrand || 'Kevilton',
-            warrantyPeriod: it.warrantyPeriod || '5 Years',
-          }))
-        : [
-            {
-              productType: 'Switches and Sockets',
-              productBrand: 'Kevilton',
-              warrantyPeriod: '5 Years',
-            },
-          ];
-
-      onChange({
-        letterType: 'po_certificate',
-        items: updatedItems,
-      });
-    } else {
-      const updatedItems = (formData.items && formData.items.length > 0)
-        ? formData.items.map((it) => ({
-            ...it,
-            itemCode: it.itemCode || 'KEV-SW-101',
-            description: it.description || it.productType || '1 Gang 1 Way Switch 10A',
-            warrantyPeriod: it.warrantyPeriod || '5 Years',
-          }))
-        : [
-            {
-              itemCode: 'KEV-SW-101',
-              description: '1 Gang 1 Way Switch 10A',
-              warrantyPeriod: '5 Years',
-            },
-          ];
-
-      onChange({
-        letterType: 'declaration',
-        items: updatedItems,
-      });
-    }
+    onChange({
+      letterType: type,
+      poNumber: formData.poNumber || '',
+    });
     setErrors({});
   };
 
   // Add Item Row
   const handleAddItem = () => {
-    const newItem: ProductItemRow = isPoCertificate
-      ? { productType: '', productBrand: 'Kevilton', warrantyPeriod: '5 Years' }
-      : { itemCode: '', description: '', warrantyPeriod: '5 Years' };
+    const newItem: ProductItemRow = {
+      description: '',
+      productBrand: PRODUCT_BRAND_OPTIONS[0],
+      warrantyPeriod: '5 Years',
+    };
 
     onChange({ items: [...formData.items, newItem] });
   };
@@ -150,11 +108,12 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       onChange({
         letterType: 'po_certificate',
         date: new Date().toISOString().split('T')[0],
+        poNumber: 'PO-2026-089',
         customerAddress: `The General Manager\nPower & Energy Projects Division\nLanka Electricity Services (Pvt) Ltd\nNo. 45, Galle Road, Colombo 03`,
         items: [
-          { productType: 'Distribution Boards & Enclosures', productBrand: 'Kevilton', warrantyPeriod: '10 Years' },
-          { productType: 'Modular Switches and Socket Outlets', productBrand: 'Kevilton', warrantyPeriod: '5 Years' },
-          { productType: 'Miniature Circuit Breakers (MCB) 6kA', productBrand: 'Kevilton', warrantyPeriod: '2 Years' },
+          { description: 'KEV-DB-08 - Distribution Boards & Enclosures 8-Way', productBrand: 'Circuit Protection Devices', warrantyPeriod: '10 Years' },
+          { description: 'KEV-MOD-01 - Modular Switches and Socket Outlets', productBrand: 'Wiring Devices', warrantyPeriod: '5 Years' },
+          { description: 'KEV-MCB-6K - Miniature Circuit Breakers (MCB) 6kA', productBrand: 'Circuit Protection Devices', warrantyPeriod: '2 Years' },
         ],
       });
     } else {
@@ -163,9 +122,9 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
         date: new Date().toISOString().split('T')[0],
         customerAddress: `Mr. Kasun Rajapaksha\nSenior Electrical Consultant\nApex Construction & Engineering (Pvt) Ltd\nNo. 128, High Level Road, Nugegoda`,
         items: [
-          { itemCode: 'KEV-SW-101', description: '1 Gang 1 Way Switch 10A White', warrantyPeriod: '5 Years' },
-          { itemCode: 'KEV-SK-202', description: '13A Switched Socket Outlet Single', warrantyPeriod: '2 Years' },
-          { itemCode: 'KEV-MCB-32', description: 'Single Pole MCB 32A 6kA Curve C', warrantyPeriod: '2 Years' },
+          { description: 'KEV-SW-101 - 1 Gang 1 Way Switch 10A White', productBrand: 'Wiring Devices', warrantyPeriod: '5 Years' },
+          { description: 'KEV-SK-202 - 13A Switched Socket Outlet Single', productBrand: 'Wiring Devices', warrantyPeriod: '2 Years' },
+          { description: 'KEV-MCB-32 - Single Pole MCB 32A 6kA Curve C', productBrand: 'Circuit Protection Devices', warrantyPeriod: '2 Years' },
         ],
       });
     }
@@ -176,9 +135,8 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
     onChange({
       customerAddress: '',
       date: new Date().toISOString().split('T')[0],
-      items: isPoCertificate
-        ? [{ productType: '', productBrand: 'Kevilton', warrantyPeriod: '5 Years' }]
-        : [{ itemCode: '', description: '', warrantyPeriod: '5 Years' }],
+      poNumber: '',
+      items: [{ description: '', productBrand: PRODUCT_BRAND_OPTIONS[0], warrantyPeriod: '5 Years' }],
     });
     setErrors({});
   };
@@ -307,7 +265,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                   1. Common Draft Warranty Certificate
                 </span>
                 <span className="text-xs text-slate-500 mt-0.5 block">
-                  Declaration letter asking: <strong>1. Item Code</strong>, <strong>2. Description</strong>, <strong>3. Warranty Period</strong>
+                  Declaration letter with: <strong>1. Product Description</strong>, <strong>2. Product Brand</strong>, <strong>3. Warranty Period</strong>
                 </span>
               </div>
             </label>
@@ -334,7 +292,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                   2. Common Warranty Certificate
                 </span>
                 <span className="text-xs text-slate-500 mt-0.5 block">
-                  Certificate asking: <strong>1. Product type</strong>, <strong>2. Product Brand</strong>, <strong>3. Warranty Period</strong>
+                  Certificate asking: <strong>PO Number</strong>, <strong>1. Product Description</strong>, <strong>2. Product Brand</strong>, <strong>3. Warranty Period</strong>
                 </span>
               </div>
             </label>
@@ -386,6 +344,36 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
           )}
         </div>
 
+        {/* PO Number Field (For Common Warranty Certificate) */}
+        {isPoCertificate && (
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                <FileText className="w-5 h-5 stroke-[2.2]" />
+              </div>
+              <div>
+                <label htmlFor="poNumber" className="block text-sm font-bold text-slate-800">
+                  PO Number
+                </label>
+                <p className="text-xs text-slate-500">
+                  Purchase Order number (added to the end of the subject title)
+                </p>
+              </div>
+            </div>
+
+            <div className="relative">
+              <input
+                type="text"
+                id="poNumber"
+                value={formData.poNumber || ''}
+                onChange={(e) => onChange({ poNumber: e.target.value })}
+                placeholder="e.g. PO-2026-089 or 2026/KEV/PO/441"
+                className="w-full px-4 py-3 text-sm text-slate-800 bg-slate-50/50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 hover:border-slate-300 transition-all font-medium placeholder:text-slate-400"
+              />
+            </div>
+          </div>
+        )}
+
         {/* ============================================================ */}
         {/* STEP 3: DYNAMIC PRODUCT DETAILS ACCORDING TO LETTER TYPE      */}
         {/* If Common Draft: 1. Item Code, 2. Description, 3. Period     */}
@@ -399,16 +387,8 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
               </div>
               <div>
                 <h3 className="text-sm font-bold text-slate-800">
-                  {isPoCertificate
-                    ? 'Product Items (Product type · Product Brand · Warranty Period)'
-                    : 'Product Items (Item Code · Description · Warranty Period)'}{' '}
-                  <span className="text-red-500">*</span>
+                  Product Items Table <span className="text-red-500">*</span>
                 </h3>
-                <p className="text-xs text-slate-500">
-                  {isPoCertificate
-                    ? 'Matching your Common Warranty Certificate table structure'
-                    : 'Matching your Common Draft Warranty Certificate table structure'}
-                </p>
               </div>
             </div>
 
@@ -427,119 +407,76 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
             {formData.items.map((item, index) => (
               <div
                 key={index}
-                className="p-3.5 bg-slate-50/70 border border-slate-200 rounded-xl flex flex-col md:flex-row items-start md:items-center gap-3 transition-all hover:border-slate-300"
+                className="p-4 bg-slate-50/70 border border-slate-200 rounded-xl flex flex-col gap-3 transition-all hover:border-slate-300"
               >
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-400 w-6 shrink-0">
-                  #{index + 1}
+                {/* Top Section: Item Index + Full Width Product Description */}
+                <div className="flex items-start gap-3">
+                  <div className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-500 flex items-center justify-center shrink-0 mt-5 shadow-xs">
+                    #{index + 1}
+                  </div>
+
+                  <div className="flex-1">
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Product Description <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={item.description || ''}
+                      onChange={(e) => handleItemChange(index, 'description', e.target.value)}
+                      placeholder="e.g. KEV-SW-101 - 1 Gang 1 Way Switch 10A White"
+                      className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-xs"
+                    />
+                  </div>
+
+                  {formData.items.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveItem(index)}
+                      className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer shrink-0 mt-5"
+                      title="Remove item"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
 
-                {!isPoCertificate ? (
-                  /* ======================================================= */
-                  /* Option 1: 1. Item Code | 2. Description | 3. Warranty Period */
-                  /* ======================================================= */
-                  <>
-                    {/* 1. Item Code */}
-                    <div className="w-full md:w-1/4">
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                        1. Item Code
-                      </label>
-                      <input
-                        type="text"
-                        value={item.itemCode || ''}
-                        onChange={(e) => handleItemChange(index, 'itemCode', e.target.value)}
-                        placeholder="e.g. KEV-SW-101"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                      />
-                    </div>
-
-                    {/* 2. Description */}
-                    <div className="w-full md:w-1/2">
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                        2. Description
-                      </label>
-                      <input
-                        type="text"
-                        value={item.description || ''}
-                        onChange={(e) => handleItemChange(index, 'description', e.target.value)}
-                        placeholder="e.g. 1 Gang 1 Way Switch 10A"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                      />
-                    </div>
-
-                    {/* 3. Warranty Period */}
-                    <div className="w-full md:w-1/4">
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                        3. Warranty Period
-                      </label>
-                      <input
-                        type="text"
-                        value={item.warrantyPeriod || ''}
-                        onChange={(e) => handleItemChange(index, 'warrantyPeriod', e.target.value)}
-                        placeholder="e.g. 5 Years"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                      />
-                    </div>
-                  </>
-                ) : (
-                  /* ======================================================= */
-                  /* Option 2: 1. Product type | 2. Product Brand | 3. Warranty Period */
-                  /* ======================================================= */
-                  <>
-                    {/* 1. Product type */}
-                    <div className="w-full md:w-1/2">
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                        1. Product type
-                      </label>
-                      <input
-                        type="text"
-                        value={item.productType || ''}
-                        onChange={(e) => handleItemChange(index, 'productType', e.target.value)}
-                        placeholder="e.g. Distribution Board, Switches & Sockets"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                      />
-                    </div>
-
-                    {/* 2. Product Brand */}
-                    <div className="w-full md:w-1/4">
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                        2. Product Brand
-                      </label>
-                      <input
-                        type="text"
-                        value={item.productBrand || ''}
+                {/* Bottom Segment: Product Brand + Warranty Period */}
+                <div className="pl-10 grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200/60">
+                  {/* Product Brand Dropdown */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                      Product Brand <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={item.productBrand || PRODUCT_BRAND_OPTIONS[0]}
                         onChange={(e) => handleItemChange(index, 'productBrand', e.target.value)}
-                        placeholder="e.g. Kevilton"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                      />
+                        className="w-full appearance-none px-3 py-2 pr-8 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer shadow-xs"
+                      >
+                        {PRODUCT_BRAND_OPTIONS.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
+                  </div>
 
-                    {/* 3. Warranty Period */}
-                    <div className="w-full md:w-1/4">
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                        3. Warranty Period
-                      </label>
-                      <input
-                        type="text"
-                        value={item.warrantyPeriod || ''}
-                        onChange={(e) => handleItemChange(index, 'warrantyPeriod', e.target.value)}
-                        placeholder="e.g. 5 Years"
-                        className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                      />
-                    </div>
-                  </>
-                )}
-
-                {/* Remove button */}
-                {formData.items.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveItem(index)}
-                    className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer self-end md:self-center"
-                    title="Remove item"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
+                  {/* Warranty Period */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                      Warranty Period <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={item.warrantyPeriod || ''}
+                      onChange={(e) => handleItemChange(index, 'warrantyPeriod', e.target.value)}
+                      placeholder="e.g. 5 Years"
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-xs"
+                    />
+                  </div>
+                </div>
               </div>
             ))}
           </div>

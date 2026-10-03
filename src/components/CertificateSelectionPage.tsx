@@ -1,8 +1,8 @@
 import React from 'react';
 import { ArrowLeft, Download, FileText, CheckCircle2, ShieldCheck, FileCheck2 } from 'lucide-react';
 import { WarrantyFormData } from '../types';
-import { formatDateForCertificate, parseCustomerAddress } from '../utils/templateParser';
-import { getWarrantyRows } from '../utils/cleanPdfGenerator';
+import { formatDateForCertificate, parseCustomerAddress, getCommonWarrantySubject } from '../utils/templateParser';
+import { getWarrantyRows, getProductBrandSubject } from '../utils/cleanPdfGenerator';
 
 interface CertificateSelectionPageProps {
   formData: WarrantyFormData;
@@ -98,53 +98,55 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
           >
             {/* 1. Date */}
             <div>
-              <span>Date: {formattedDate || '[Date]'}</span>
+              <span className="font-bold">{formattedDate || '[Date]'}</span>
             </div>
 
-            {/* 2. Recipient Address Block */}
+            {/* 2. Recipient Address Block (First line like Mr./Ms. [Customer Name] is bold) */}
             <div className="space-y-0.5 leading-snug">
               {parsedAddr.formattedLines.map((line, idx) => (
-                <p key={idx}>{line}</p>
+                <p key={idx} className={idx === 0 ? 'font-bold' : ''}>
+                  {line}
+                </p>
               ))}
             </div>
 
             {isPoCertificate ? (
               /* ================= TEMPLATE 2: Common Warranty Certificate ================= */
               <>
-                {/* Subject */}
+                {/* Subject Title (Without "Subject:" and with PO number at the end - Bold) */}
                 <p className="font-bold pt-1">
-                  Subject: Warranty Certificate for Kevilton Products Supplied
+                  {getCommonWarrantySubject(formData.poNumber)}
                 </p>
 
-                {/* Salutation */}
-                <p>Dear Sir/Madam,</p>
+                {/* Salutation (Bold in template) */}
+                <p className="font-bold">Dear Sir/Madam,</p>
 
                 {/* Opening Paragraphs */}
                 <p className="text-justify">
-                  We, Kevilton Electrical Products (Pvt.) Ltd., sincerely appreciate the trust you have placed in our products. We are committed to providing high-quality products that comply with national and international standards.
+                  We, <strong className="font-bold">Kevilton Electrical Products (Pvt.) Ltd.</strong>, sincerely appreciate the trust you have placed in our products. We are committed to providing high-quality products that comply with national and international standards.
                 </p>
 
                 <p className="text-justify">
-                  We hereby confirm that the following products supplied are covered under the Kevilton warranty program.
+                  We hereby confirm that the following products supplied against Purchase Order No. <strong className="font-bold">{formData.poNumber?.trim() || '[PO Number]'}</strong> are covered under the Kevilton warranty program.
                 </p>
 
                 <p className="font-bold pt-1">Items Covered Under This Warranty:</p>
 
-                {/* Table for Template 2: 1. Product type | 2. Product Brand | 3. Warranty Period */}
+                {/* Table for Template 2: 1. Product Description | 2. Product Brand | 3. Warranty Period */}
                 <div className="overflow-x-auto my-2">
                   <table className="w-full border-collapse border border-black text-[12px]">
                     <thead>
                       <tr className="bg-transparent font-bold">
-                        <th className="border border-black p-2 text-left">Product type</th>
-                        <th className="border border-black p-2 text-left">Product Brand</th>
-                        <th className="border border-black p-2 text-left">Warranty Period</th>
+                        <th className="border border-black p-2 text-left w-1/2">Product Description</th>
+                        <th className="border border-black p-2 text-left w-1/4">Product Brand</th>
+                        <th className="border border-black p-2 text-left w-1/4">Warranty Period</th>
                       </tr>
                     </thead>
                     <tbody>
                       {rows.map((row, idx) => (
                         <tr key={idx}>
-                          <td className="border border-black p-2">{row.productType || row.description}</td>
-                          <td className="border border-black p-2">{row.productBrand || 'Kevilton'}</td>
+                          <td className="border border-black p-2">{row.description}</td>
+                          <td className="border border-black p-2">{row.productBrand || 'Wiring Devices'}</td>
                           <td className="border border-black p-2">{row.warrantyPeriod}</td>
                         </tr>
                       ))}
@@ -155,7 +157,7 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
                 {/* Note and clauses */}
                 <div className="space-y-2 text-[11.5px] leading-normal text-justify">
                   <p>
-                    Note: The above warranty covers manufacturing defects under normal installation and operating conditions from the date of purchase.
+                    <strong className="font-bold">Note:</strong> The above warranty covers manufacturing defects under normal installation and operating conditions from the date of purchase.
                   </p>
                   <p>
                     This warranty does not cover defects or damage resulting from improper installation, misuse, accidents, unauthorized modifications, negligence, or external causes. Proof of purchase and relevant product identification details are required for any warranty claim.
@@ -168,47 +170,46 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
                 <div className="pt-2">
                   <p>Thank you.</p>
                   <p className="mt-1">Yours faithfully,</p>
-                  <p className="font-bold">Kevilton Electrical Products (Pvt.) Ltd.</p>
 
                   {/* Clean text signature area (NO stamp, NO signature image) */}
                   <div className="pt-8">
-                    <p className="text-slate-400">...........................................................................</p>
+                    <p className="text-slate-400">……………………..</p>
                     <p className="font-bold text-[12px]">Manager – Quality Assurance</p>
-                    <p className="text-[11px]">Kevilton Electrical Products (Pvt.) Ltd.</p>
+                    <p className="font-bold text-[11px]">Kevilton Electrical Products (Pvt.) Ltd.</p>
                   </div>
                 </div>
               </>
             ) : (
               /* ================= TEMPLATE 1: Common Draft Warranty Certificate ================= */
               <>
-                {/* Salutation */}
-                <p>Dear Sir/Madam,</p>
+                {/* Salutation (Bold in template) */}
+                <p className="font-bold">Dear Sir/Madam,</p>
 
-                {/* Title */}
+                {/* Title (Bold in template) */}
                 <p className="font-bold text-[13px] pt-1">
-                  Warranty Declaration for {rows[0]?.description || rows[0]?.productType || '[Product Description]'}
+                  Warranty Declaration for {getProductBrandSubject(rows)}
                 </p>
 
                 {/* Paragraph 1 */}
                 <p className="text-justify">
-                  With reference to the product supplied to {parsedAddr.companyName || '[Company Name]'}, we hereby confirm that Kevilton Electrical Products (Pvt.) Ltd. provides the following warranty for the product detailed below:
+                  With reference to the product supplied to <strong className="font-bold">{parsedAddr.companyName || '[Company Name]'}</strong>, we hereby confirm that <strong className="font-bold">Kevilton Electrical Products (Pvt.) Ltd.</strong> provides the following warranty for the product detailed below:
                 </p>
 
-                {/* Table for Template 1: 1. Item Code | 2. Description | 3. Warranty Period */}
+                {/* Table for Template 1: 1. Product Description | 2. Product Brand | 3. Warranty Period */}
                 <div className="overflow-x-auto my-2">
                   <table className="w-full border-collapse border border-black text-[12px]">
                     <thead>
                       <tr className="bg-transparent font-bold">
-                        <th className="border border-black p-2 text-left w-1/4">Item Code</th>
-                        <th className="border border-black p-2 text-left w-1/2">Description</th>
+                        <th className="border border-black p-2 text-left w-1/2">Product Description</th>
+                        <th className="border border-black p-2 text-left w-1/4">Product Brand</th>
                         <th className="border border-black p-2 text-left w-1/4">Warranty Period</th>
                       </tr>
                     </thead>
                     <tbody>
                       {rows.map((row, idx) => (
                         <tr key={idx}>
-                          <td className="border border-black p-2 font-mono">{row.itemCode}</td>
                           <td className="border border-black p-2">{row.description}</td>
+                          <td className="border border-black p-2">{row.productBrand || 'Wiring Devices'}</td>
                           <td className="border border-black p-2">{row.warrantyPeriod}</td>
                         </tr>
                       ))}
@@ -222,13 +223,13 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
                     The above warranty covers manufacturing defects arising under normal installation and operating conditions from the date of delivery.
                   </p>
                   <p>
-                    During the warranty period, Kevilton Electrical Products (Pvt.) Ltd. will, at its discretion, repair or replace any product found to be defective due to manufacturing faults.
+                    During the warranty period, <strong className="font-bold">Kevilton Electrical Products (Pvt.) Ltd.</strong> will, at its discretion, repair or replace any product found to be defective due to manufacturing faults.
                   </p>
                   <p>
                     This warranty does not cover defects or damage resulting from improper installation, misuse, accidents, unauthorized modification, negligence, incorrect handling, external causes, or normal wear and tear. Proof of purchase and relevant product identification details may be required for any warranty claim.
                   </p>
                   <p>
-                    The decision of Kevilton Electrical Products (Pvt.) Ltd. shall be final regarding any warranty claim or dispute that may arise. This letter is issued upon request as a warranty reference for the above-mentioned product.
+                    The decision of <strong className="font-bold">Kevilton Electrical Products (Pvt.) Ltd.</strong> shall be final regarding any warranty claim or dispute that may arise. This letter is issued upon request as a warranty reference for the above-mentioned product.
                   </p>
                   <p>
                     Should you require any further information regarding this warranty, please do not hesitate to contact us.
@@ -242,9 +243,9 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
 
                   {/* Clean text signature line (NO stamp, NO signature image) */}
                   <div className="pt-8">
-                    <p className="text-slate-400">...........................................................................</p>
+                    <p className="text-slate-400">.............................................</p>
                     <p className="font-bold text-[12px]">Manager – Quality Assurance</p>
-                    <p className="text-[11px]">Kevilton Electrical Products (Pvt.) Ltd.</p>
+                    <p className="font-bold text-[11px]">Kevilton Electrical Products (Pvt.) Ltd.</p>
                   </div>
                 </div>
               </>

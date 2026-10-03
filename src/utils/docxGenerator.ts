@@ -10,8 +10,8 @@ import {
   BorderStyle,
 } from 'docx';
 import { WarrantyFormData } from '../types';
-import { formatDateForCertificate, parseCustomerAddress } from './templateParser';
-import { getWarrantyRows } from './cleanPdfGenerator';
+import { formatDateForCertificate, parseCustomerAddress, getCommonWarrantySubject } from './templateParser';
+import { getWarrantyRows, getProductBrandSubject } from './cleanPdfGenerator';
 
 /**
  * Generates an editable Microsoft Word (.docx) document strictly without
@@ -26,30 +26,32 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
 
   const docChildren: (Paragraph | Table)[] = [];
 
-  // 1. Date
+  // 1. Date (Bold in template)
   docChildren.push(
     new Paragraph({
       spacing: { after: 240 },
       children: [
         new TextRun({
-          text: `Date: ${formattedDate || ''}`,
+          text: formattedDate || '',
           font: 'Times New Roman',
           size: 22, // 11pt
+          bold: true,
         }),
       ],
     })
   );
 
-  // 2. Recipient Address Lines
-  for (const line of parsedAddr.formattedLines) {
+  // 2. Recipient Address Lines (First line like Mr./Ms. [Customer Name] is bold)
+  for (let i = 0; i < parsedAddr.formattedLines.length; i++) {
     docChildren.push(
       new Paragraph({
         spacing: { after: 80 },
         children: [
           new TextRun({
-            text: line,
+            text: parsedAddr.formattedLines[i],
             font: 'Times New Roman',
             size: 22,
+            bold: i === 0,
           }),
         ],
       })
@@ -63,13 +65,14 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
     // TEMPLATE 2: Common Warranty Certificate
     // Columns: Product type | Product Brand | Warranty Period
 
-    // Subject line
+    // Subject line (Without "Subject:" and with PO number at the end - Entire line bold)
+    const subjectText = getCommonWarrantySubject(formData.poNumber);
     docChildren.push(
       new Paragraph({
         spacing: { after: 220 },
         children: [
           new TextRun({
-            text: 'Subject: Warranty Certificate for Kevilton Products Supplied',
+            text: subjectText,
             font: 'Times New Roman',
             size: 23, // 11.5pt
             bold: true,
@@ -78,7 +81,7 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
       })
     );
 
-    // Salutation
+    // Salutation (Bold in template)
     docChildren.push(
       new Paragraph({
         spacing: { after: 180 },
@@ -87,32 +90,30 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
             text: 'Dear Sir/Madam,',
             font: 'Times New Roman',
             size: 22,
+            bold: true,
           }),
         ],
       })
     );
 
-    // Paragraph 1
+    // Paragraph 1 (with Kevilton bold)
     docChildren.push(
       new Paragraph({
         spacing: { after: 160 },
         children: [
           new TextRun({
-            text: 'We, Kevilton Electrical Products (Pvt.) Ltd., sincerely appreciate the trust you have placed in our products. We are committed to providing high-quality products that comply with national and international standards.',
+            text: 'We, ',
             font: 'Times New Roman',
             size: 21, // 10.5pt
           }),
-        ],
-      })
-    );
-
-    // Paragraph 2
-    docChildren.push(
-      new Paragraph({
-        spacing: { after: 180 },
-        children: [
           new TextRun({
-            text: 'We hereby confirm that the following products supplied are covered under the Kevilton warranty program.',
+            text: 'Kevilton Electrical Products (Pvt.) Ltd.',
+            font: 'Times New Roman',
+            size: 21,
+            bold: true,
+          }),
+          new TextRun({
+            text: ', sincerely appreciate the trust you have placed in our products. We are committed to providing high-quality products that comply with national and international standards.',
             font: 'Times New Roman',
             size: 21,
           }),
@@ -120,7 +121,33 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
       })
     );
 
-    // Section header
+    // Paragraph 2 (with Purchase Order number bold)
+    const poNumText = formData.poNumber?.trim() || '[PO Number]';
+    docChildren.push(
+      new Paragraph({
+        spacing: { after: 180 },
+        children: [
+          new TextRun({
+            text: 'We hereby confirm that the following products supplied against Purchase Order No. ',
+            font: 'Times New Roman',
+            size: 21,
+          }),
+          new TextRun({
+            text: poNumText,
+            font: 'Times New Roman',
+            size: 21,
+            bold: true,
+          }),
+          new TextRun({
+            text: ' are covered under the Kevilton warranty program.',
+            font: 'Times New Roman',
+            size: 21,
+          }),
+        ],
+      })
+    );
+
+    // Section header (Bold in template)
     docChildren.push(
       new Paragraph({
         spacing: { after: 140 },
@@ -135,12 +162,12 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
       })
     );
 
-    // Table: Product type | Product Brand | Warranty Period (No shading)
+    // Table: Product Description | Product Brand | Warranty Period (No shading)
     const tableHeader = new TableRow({
       tableHeader: true,
       children: [
-        createTableCell('Product type', true, 4200),
-        createTableCell('Product Brand', true, 2600),
+        createTableCell('Product Description', true, 4560),
+        createTableCell('Product Brand', true, 2400),
         createTableCell('Warranty Period', true, 2400),
       ],
     });
@@ -148,8 +175,8 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
     const tableRows = rows.map((r) =>
       new TableRow({
         children: [
-          createTableCell(r.productType || r.description, false, 4200),
-          createTableCell(r.productBrand || 'Kevilton', false, 2600),
+          createTableCell(r.description, false, 4560),
+          createTableCell(r.productBrand || 'Wiring Devices', false, 2400),
           createTableCell(r.warrantyPeriod, false, 2400),
         ],
       })
@@ -157,34 +184,59 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
 
     docChildren.push(
       new Table({
-        width: { size: 9200, type: WidthType.DXA },
+        width: { size: 9360, type: WidthType.DXA },
         rows: [tableHeader, ...tableRows],
       })
     );
 
     docChildren.push(new Paragraph({ spacing: { after: 200 } }));
 
-    // Note & Disclaimers
-    const notes = [
-      'Note: The above warranty covers manufacturing defects under normal installation and operating conditions from the date of purchase.',
-      'This warranty does not cover defects or damage resulting from improper installation, misuse, accidents, unauthorized modifications, negligence, or external causes. Proof of purchase and relevant product identification details are required for any warranty claim.',
-      'Should you require any further information regarding this warranty, please do not hesitate to contact us.',
-    ];
+    // Note with "Note: " bold
+    docChildren.push(
+      new Paragraph({
+        spacing: { after: 140 },
+        children: [
+          new TextRun({
+            text: 'Note: ',
+            font: 'Times New Roman',
+            size: 20,
+            bold: true,
+          }),
+          new TextRun({
+            text: 'The above warranty covers manufacturing defects under normal installation and operating conditions from the date of purchase.',
+            font: 'Times New Roman',
+            size: 20,
+          }),
+        ],
+      })
+    );
 
-    for (const note of notes) {
-      docChildren.push(
-        new Paragraph({
-          spacing: { after: 140 },
-          children: [
-            new TextRun({
-              text: note,
-              font: 'Times New Roman',
-              size: 20, // 10pt
-            }),
-          ],
-        })
-      );
-    }
+    // Disclaimers
+    docChildren.push(
+      new Paragraph({
+        spacing: { after: 140 },
+        children: [
+          new TextRun({
+            text: 'This warranty does not cover defects or damage resulting from improper installation, misuse, accidents, unauthorized modifications, negligence, or external causes. Proof of purchase and relevant product identification details are required for any warranty claim.',
+            font: 'Times New Roman',
+            size: 20,
+          }),
+        ],
+      })
+    );
+
+    docChildren.push(
+      new Paragraph({
+        spacing: { after: 140 },
+        children: [
+          new TextRun({
+            text: 'Should you require any further information regarding this warranty, please do not hesitate to contact us.',
+            font: 'Times New Roman',
+            size: 20,
+          }),
+        ],
+      })
+    );
 
     docChildren.push(
       new Paragraph({
@@ -194,21 +246,8 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
     );
     docChildren.push(
       new Paragraph({
-        spacing: { after: 120 },
+        spacing: { after: 500 },
         children: [new TextRun({ text: 'Yours faithfully,', font: 'Times New Roman', size: 21 })],
-      })
-    );
-    docChildren.push(
-      new Paragraph({
-        spacing: { after: 600 },
-        children: [
-          new TextRun({
-            text: 'Kevilton Electrical Products (Pvt.) Ltd.',
-            font: 'Times New Roman',
-            size: 21,
-            bold: true,
-          }),
-        ],
       })
     );
 
@@ -218,7 +257,7 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
         spacing: { after: 80 },
         children: [
           new TextRun({
-            text: '...........................................................................',
+            text: '……………………..',
             font: 'Times New Roman',
             size: 20,
           }),
@@ -253,6 +292,7 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
   } else {
     // TEMPLATE 1: Common Draft Warranty Certificate (Declaration)
     // Columns: Item Code | Description | Warranty Period
+    // Salutation (Bold in template)
     docChildren.push(
       new Paragraph({
         spacing: { after: 200 },
@@ -261,19 +301,20 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
             text: 'Dear Sir/Madam,',
             font: 'Times New Roman',
             size: 22,
+            bold: true,
           }),
         ],
       })
     );
 
-    // Title: Warranty Declaration for [Product Description]
-    const primaryProdDesc = rows[0]?.description || rows[0]?.productType || '[Product Description]';
+    // Title: Warranty Declaration for [Product Brand]
+    const brandSubject = getProductBrandSubject(rows);
     docChildren.push(
       new Paragraph({
         spacing: { after: 180 },
         children: [
           new TextRun({
-            text: `Warranty Declaration for ${primaryProdDesc}`,
+            text: `Warranty Declaration for ${brandSubject}`,
             font: 'Times New Roman',
             size: 23,
             bold: true,
@@ -282,14 +323,36 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
       })
     );
 
-    // Opening Paragraph
+    // Opening Paragraph (with company name and Kevilton bold)
     const company = parsedAddr.companyName || '[Company Name]';
     docChildren.push(
       new Paragraph({
         spacing: { after: 180 },
         children: [
           new TextRun({
-            text: `With reference to the product supplied to ${company}, we hereby confirm that Kevilton Electrical Products (Pvt.) Ltd. provides the following warranty for the product detailed below:`,
+            text: 'With reference to the product supplied to ',
+            font: 'Times New Roman',
+            size: 21,
+          }),
+          new TextRun({
+            text: company,
+            font: 'Times New Roman',
+            size: 21,
+            bold: true,
+          }),
+          new TextRun({
+            text: ', we hereby confirm that ',
+            font: 'Times New Roman',
+            size: 21,
+          }),
+          new TextRun({
+            text: 'Kevilton Electrical Products (Pvt.) Ltd.',
+            font: 'Times New Roman',
+            size: 21,
+            bold: true,
+          }),
+          new TextRun({
+            text: ' provides the following warranty for the product detailed below:',
             font: 'Times New Roman',
             size: 21,
           }),
@@ -297,12 +360,12 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
       })
     );
 
-    // Table: Item Code | Description | Warranty Period (No shading)
+    // Table: Product Description | Product Brand | Warranty Period (No shading)
     const tableHeader = new TableRow({
       tableHeader: true,
       children: [
-        createTableCell('Item Code', true, 2600),
-        createTableCell('Description', true, 4200),
+        createTableCell('Product Description', true, 4560),
+        createTableCell('Product Brand', true, 2400),
         createTableCell('Warranty Period', true, 2400),
       ],
     });
@@ -310,8 +373,8 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
     const tableRows = rows.map((r) =>
       new TableRow({
         children: [
-          createTableCell(r.itemCode, false, 2600),
-          createTableCell(r.description, false, 4200),
+          createTableCell(r.description, false, 4560),
+          createTableCell(r.productBrand || 'Wiring Devices', false, 2400),
           createTableCell(r.warrantyPeriod, false, 2400),
         ],
       })
@@ -319,36 +382,105 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
 
     docChildren.push(
       new Table({
-        width: { size: 9200, type: WidthType.DXA },
+        width: { size: 9360, type: WidthType.DXA },
         rows: [tableHeader, ...tableRows],
       })
     );
 
     docChildren.push(new Paragraph({ spacing: { after: 200 } }));
 
-    // Body Paragraphs
-    const bodyParagraphs = [
-      'The above warranty covers manufacturing defects arising under normal installation and operating conditions from the date of delivery.',
-      'During the warranty period, Kevilton Electrical Products (Pvt.) Ltd. will, at its discretion, repair or replace any product found to be defective due to manufacturing faults.',
-      'This warranty does not cover defects or damage resulting from improper installation, misuse, accidents, unauthorized modification, negligence, incorrect handling, external causes, or normal wear and tear. Proof of purchase and relevant product identification details may be required for any warranty claim.',
-      'The decision of Kevilton Electrical Products (Pvt.) Ltd. shall be final regarding any warranty claim or dispute that may arise. This letter is issued upon request as a warranty reference for the above-mentioned product.',
-      'Should you require any further information regarding this warranty, please do not hesitate to contact us.',
-    ];
+    // Body Paragraphs (Clauses 2 and 4 have Kevilton in bold)
+    // Clause 1
+    docChildren.push(
+      new Paragraph({
+        spacing: { after: 140 },
+        children: [
+          new TextRun({
+            text: 'The above warranty covers manufacturing defects arising under normal installation and operating conditions from the date of delivery.',
+            font: 'Times New Roman',
+            size: 20,
+          }),
+        ],
+      })
+    );
 
-    for (const paragraph of bodyParagraphs) {
-      docChildren.push(
-        new Paragraph({
-          spacing: { after: 140 },
-          children: [
-            new TextRun({
-              text: paragraph,
-              font: 'Times New Roman',
-              size: 20,
-            }),
-          ],
-        })
-      );
-    }
+    // Clause 2
+    docChildren.push(
+      new Paragraph({
+        spacing: { after: 140 },
+        children: [
+          new TextRun({
+            text: 'During the warranty period, ',
+            font: 'Times New Roman',
+            size: 20,
+          }),
+          new TextRun({
+            text: 'Kevilton Electrical Products (Pvt.) Ltd.',
+            font: 'Times New Roman',
+            size: 20,
+            bold: true,
+          }),
+          new TextRun({
+            text: ' will, at its discretion, repair or replace any product found to be defective due to manufacturing faults.',
+            font: 'Times New Roman',
+            size: 20,
+          }),
+        ],
+      })
+    );
+
+    // Clause 3
+    docChildren.push(
+      new Paragraph({
+        spacing: { after: 140 },
+        children: [
+          new TextRun({
+            text: 'This warranty does not cover defects or damage resulting from improper installation, misuse, accidents, unauthorized modification, negligence, incorrect handling, external causes, or normal wear and tear. Proof of purchase and relevant product identification details may be required for any warranty claim.',
+            font: 'Times New Roman',
+            size: 20,
+          }),
+        ],
+      })
+    );
+
+    // Clause 4
+    docChildren.push(
+      new Paragraph({
+        spacing: { after: 140 },
+        children: [
+          new TextRun({
+            text: 'The decision of ',
+            font: 'Times New Roman',
+            size: 20,
+          }),
+          new TextRun({
+            text: 'Kevilton Electrical Products (Pvt.) Ltd.',
+            font: 'Times New Roman',
+            size: 20,
+            bold: true,
+          }),
+          new TextRun({
+            text: ' shall be final regarding any warranty claim or dispute that may arise. This letter is issued upon request as a warranty reference for the above-mentioned product.',
+            font: 'Times New Roman',
+            size: 20,
+          }),
+        ],
+      })
+    );
+
+    // Clause 5
+    docChildren.push(
+      new Paragraph({
+        spacing: { after: 140 },
+        children: [
+          new TextRun({
+            text: 'Should you require any further information regarding this warranty, please do not hesitate to contact us.',
+            font: 'Times New Roman',
+            size: 20,
+          }),
+        ],
+      })
+    );
 
     docChildren.push(
       new Paragraph({
@@ -389,7 +521,7 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
         spacing: { after: 80 },
         children: [
           new TextRun({
-            text: '...........................................................................',
+            text: '.............................................',
             font: 'Times New Roman',
             size: 20,
           }),
@@ -417,6 +549,7 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
             text: 'Kevilton Electrical Products (Pvt.) Ltd.',
             font: 'Times New Roman',
             size: 20,
+            bold: true,
           }),
         ],
       })

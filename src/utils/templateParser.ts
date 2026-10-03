@@ -8,11 +8,11 @@ export function parseCustomerAddress(rawAddress: string) {
 
   if (lines.length === 0) {
     return {
-      customerName: '[Customer Name]',
+      customerName: 'Mr./Ms. [Customer Name]',
       designation: '[Designation]',
       companyName: '[Company Name]',
       companyAddress: '[Company Address]',
-      formattedLines: ['[Customer Name]', '[Designation]', '[Company Name]', '[Company Address]'],
+      formattedLines: ['Mr./Ms. [Customer Name]', '[Designation]', '[Company Name]', '[Company Address]'],
     };
   }
 
@@ -191,4 +191,22 @@ export function formatDateForCertificate(dateStr: string): string {
   } catch {
     return dateStr;
   }
+}
+
+/**
+ * Returns the subject title for Common Warranty Certificate without "Subject: " word,
+ * with the PO number appended to the end of the subject title.
+ */
+export function getCommonWarrantySubject(poNumber?: string): string {
+  const trimmed = poNumber?.trim();
+  if (!trimmed) {
+    return 'Warranty Certificate for Kevilton Products Supplied Against PO [PO Number]';
+  }
+  if (/^against\s+/i.test(trimmed)) {
+    return `Warranty Certificate for Kevilton Products Supplied ${trimmed}`;
+  }
+  if (/^po\b|^po[-:/]/i.test(trimmed)) {
+    return `Warranty Certificate for Kevilton Products Supplied Against ${trimmed}`;
+  }
+  return `Warranty Certificate for Kevilton Products Supplied Against PO ${trimmed}`;
 }

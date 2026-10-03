@@ -1,14 +1,31 @@
+export const PRODUCT_BRAND_OPTIONS = [
+  'Wiring Devices',
+  'Circuit Protection Devices',
+  'Lightings',
+  'Wiring Accessories',
+  'PVC Products',
+  'Power Fix',
+  'Appliances',
+] as const;
+
+export type ProductBrandOption = (typeof PRODUCT_BRAND_OPTIONS)[number];
+
 export type WarrantyLetterType = 'declaration' | 'po_certificate';
 
 export interface ProductItemRow {
-  // For Template 1 (Common Draft Warranty Certificate):
-  itemCode?: string;
-  description?: string; // Product description
+  // Column 1: Product Description (can enter I Code & Item Description)
+  itemCode?: string; // I code / Item Code (e.g. "KEV-SW-101")
+  description?: string; // Item Description (e.g. "1 Gang 1 Way Switch 10A White")
+
+  // Column 2: Product Brand (shows Product Family / Brand)
+  productBrand?: string; // Product Brand (e.g. "Kevilton")
+  productFamily?: string; // Product Family
+
+  // Column 3: Warranty Period
   warrantyPeriod?: string; // e.g. "5 Years"
 
-  // For Template 2 (Common Warranty Certificate):
-  productType?: string; // e.g. "Distribution Board", "MCB", "Switches"
-  productBrand?: string; // e.g. "Kevilton"
+  // Backward compatibility
+  productType?: string;
 }
 
 export interface WarrantyFormData {

@@ -24,11 +24,9 @@ export default function App() {
     customerAddress: '',
     items: [
       {
-        itemCode: 'KEV-SW-101',
-        description: '1 Gang 1 Way Switch 10A White',
+        description: 'KEV-SW-101 - 1 Gang 1 Way Switch 10A White',
+        productBrand: 'Wiring Devices',
         warrantyPeriod: '5 Years',
-        productType: '1 Gang 1 Way Switch 10A White',
-        productBrand: 'Kevilton',
       },
     ],
     poNumber: '',

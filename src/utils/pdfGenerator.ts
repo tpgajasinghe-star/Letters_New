@@ -1,7 +1,8 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { WarrantyFormData } from '../types';
-import { formatDateForCertificate, parseCustomerAddress, parseItemSupplied } from './templateParser';
+import { formatDateForCertificate, parseCustomerAddress, parseItemSupplied, getCommonWarrantySubject } from './templateParser';
+import { getWarrantyRows } from './cleanPdfGenerator';
 
 /**
  * Creates an offscreen canvas with the Kevilton logo and returns it as a data URL.
@@ -115,7 +116,7 @@ export async function generateWarrantyPdf(formData: WarrantyFormData): Promise<B
   });
 
   const parsedAddr = parseCustomerAddress(formData.customerAddress);
-  const rows = parseItemSupplied(formData.itemSupplied || '');
+  const rows = formData.items?.length ? getWarrantyRows(formData) : parseItemSupplied(formData.itemSupplied || '');
   const formattedDate = formatDateForCertificate(formData.date);
   const isPoCertificate = formData.templateType === 'po_certificate';
   const isDraft = formData.certificateKind === 'draft';
@@ -168,7 +169,7 @@ export async function generateWarrantyPdf(formData: WarrantyFormData): Promise<B
   doc.setFont('times', 'normal');
   doc.setFontSize(11);
   doc.setTextColor(20, 20, 20);
-  doc.text(`Date: ${formattedDate || '[Date]'}`, marginX, cursorY);
+  doc.text(formattedDate || '[Date]', marginX, cursorY);
   cursorY += 8;
 
   // Recipient block
@@ -195,10 +196,10 @@ export async function generateWarrantyPdf(formData: WarrantyFormData): Promise<B
   cursorY += 4;
 
   if (isPoCertificate) {
-    // Template 2: Subject Line
-    const poNum = formData.poNumber || 'PO-2026-089';
+    // Template 2: Subject Line (Without "Subject:" and with PO number at the end)
+    const subjectText = getCommonWarrantySubject(formData.poNumber);
     doc.setFont('times', 'bold');
-    doc.text(`Subject: Warranty Certificate for Kevilton Products Supplied Against PO ${poNum}`, marginX, cursorY);
+    doc.text(subjectText, marginX, cursorY);
     cursorY += 7;
 
     doc.setFont('times', 'normal');
@@ -212,7 +213,8 @@ export async function generateWarrantyPdf(formData: WarrantyFormData): Promise<B
     cursorY += p1Lines.length * 5.2 + 3;
 
     // Opening Paragraph 2
-    const p2 = `We hereby confirm that the following products supplied against Purchase Order No. ${poNum} are covered under the Kevilton warranty program.`;
+    const poNumText = formData.poNumber?.trim() || '[PO Number]';
+    const p2 = `We hereby confirm that the following products supplied against Purchase Order No. ${poNumText} are covered under the Kevilton warranty program.`;
     const p2Lines = doc.splitTextToSize(p2, 210 - marginX * 2);
     doc.text(p2Lines, marginX, cursorY);
     cursorY += p2Lines.length * 5.2 + 4;
@@ -227,7 +229,7 @@ export async function generateWarrantyPdf(formData: WarrantyFormData): Promise<B
     autoTable(doc, {
       startY: cursorY,
       margin: { left: marginX, right: marginX },
-      head: [['Product type', 'Product Brand', 'Warranty Period']],
+      head: [['Product Description', 'Product Brand', 'Warranty Period']],
       body: tableData,
       theme: 'grid',
       headStyles: {
@@ -248,8 +250,8 @@ export async function generateWarrantyPdf(formData: WarrantyFormData): Promise<B
         lineColor: [60, 60, 60],
       },
       columnStyles: {
-        0: { cellWidth: 70 },
-        1: { cellWidth: 50 },
+        0: { cellWidth: 74 },
+        1: { cellWidth: 46 },
         2: { cellWidth: 46 },
       },
     });
@@ -305,12 +307,12 @@ export async function generateWarrantyPdf(formData: WarrantyFormData): Promise<B
     cursorY += introLines.length * 5 + 3;
 
     // Table
-    const tableData = rows.map((r) => [r.itemCode, r.description, r.warrantyPeriod]);
+    const tableData = rows.map((r) => [r.description, r.productBrand || 'Kevilton', r.warrantyPeriod]);
 
     autoTable(doc, {
       startY: cursorY,
       margin: { left: marginX, right: marginX },
-      head: [['Item Code', 'Description', 'Warranty Period']],
+      head: [['Product Description', 'Product Brand', 'Warranty Period']],
       body: tableData,
       theme: 'grid',
       headStyles: {
@@ -331,8 +333,8 @@ export async function generateWarrantyPdf(formData: WarrantyFormData): Promise<B
         lineColor: [60, 60, 60],
       },
       columnStyles: {
-        0: { cellWidth: 45 },
-        1: { cellWidth: 75 },
+        0: { cellWidth: 74 },
+        1: { cellWidth: 46 },
         2: { cellWidth: 46 },
       },
     });
