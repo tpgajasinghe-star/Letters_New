@@ -187,7 +187,7 @@ export function formatDateForCertificate(dateStr: string): string {
       'November',
       'December',
     ];
-    return `${day} ${months[d.getMonth()]} ${d.getFullYear()}`;
+    return `${months[d.getMonth()]} ${day}, ${d.getFullYear()}`;
   } catch {
     return dateStr;
   }
