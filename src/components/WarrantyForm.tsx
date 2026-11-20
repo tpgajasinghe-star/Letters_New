@@ -1,6 +1,64 @@
-import React, { useState } from 'react';
-import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileCheck2, FileText, ChevronDown } from 'lucide-react';
-import { WarrantyFormData, ProductItemRow, PRODUCT_BRAND_OPTIONS } from '../types';
+import React, { useEffect, useState } from 'react';
+import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileText } from 'lucide-react';
+import { WarrantyFormData, ProductItemRow } from '../types';
+import { CatalogItem, CatalogMatch, getProductWarrantyInfo } from '../utils/warrantyRules';
+import { IndexedCatalogItem, ProductDescriptionAutocomplete } from './ProductDescriptionAutocomplete';
+
+let cachedCatalog: IndexedCatalogItem[] | null = null;
+let catalogFetchPromise: Promise<IndexedCatalogItem[]> | null = null;
+
+function loadCatalogItems(): Promise<IndexedCatalogItem[]> {
+  if (cachedCatalog) {
+    return Promise.resolve(cachedCatalog);
+  }
+  if (!catalogFetchPromise) {
+    const baseUrl = import.meta.env.BASE_URL || '/';
+    const dataUrl = `${baseUrl.replace(/\/$/, '')}/data/items.json`;
+    catalogFetchPromise = fetch(dataUrl)
+      .then((res) => {
+        if (!res.ok) return [];
+        return res.json();
+      })
+      .then((raw: unknown) => {
+        if (!Array.isArray(raw)) {
+          cachedCatalog = [];
+          return [];
+        }
+        const indexed: IndexedCatalogItem[] = [];
+        for (const entry of raw) {
+          if (!entry || typeof entry !== 'object') continue;
+          const record = entry as Partial<CatalogItem>;
+          const itemCode = typeof record.itemCode === 'string' ? record.itemCode.trim() : '';
+          const itemName = typeof record.itemName === 'string' ? record.itemName.trim() : '';
+          if (!itemCode && !itemName) continue;
+          const catalogItem: CatalogItem = {
+            itemCode,
+            itemName,
+            category: typeof record.category === 'string' ? record.category : '',
+            subCategory: typeof record.subCategory === 'string' ? record.subCategory : '',
+          };
+          const combinedDisplay = itemCode && itemName
+            ? `${itemCode} - ${itemName}`
+            : itemName || itemCode;
+          indexed.push({
+            item: catalogItem,
+            codeLower: itemCode.toLowerCase(),
+            nameLower: itemName.toLowerCase(),
+            combinedDisplay,
+            combinedLower: combinedDisplay.toLowerCase(),
+            match: getProductWarrantyInfo(catalogItem),
+          });
+        }
+        cachedCatalog = indexed;
+        return indexed;
+      })
+      .catch(() => {
+        cachedCatalog = [];
+        return [];
+      });
+  }
+  return catalogFetchPromise;
+}
 
 interface WarrantyFormProps {
   formData: WarrantyFormData;
@@ -22,6 +80,19 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
     date?: string;
     items?: string;
   }>({});
+  const [catalog, setCatalog] = useState<IndexedCatalogItem[]>(() => cachedCatalog || []);
+
+  useEffect(() => {
+    let active = true;
+    loadCatalogItems().then((items) => {
+      if (active) {
+        setCatalog(items);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const isPoCertificate = formData.letterType === 'po_certificate';
 
@@ -75,8 +146,8 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
   const handleAddItem = () => {
     const newItem: ProductItemRow = {
       description: '',
-      productBrand: PRODUCT_BRAND_OPTIONS[0],
-      warrantyPeriod: '5 Years',
+      productBrand: '',
+      warrantyPeriod: '',
     };
 
     onChange({ items: [...formData.items, newItem] });
@@ -94,6 +165,30 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
     const updated = formData.items.map((item, i) => {
       if (i === index) {
         return { ...item, [field]: value };
+      }
+      return item;
+    });
+    onChange({ items: updated });
+    if (errors.items) {
+      setErrors((prev) => ({ ...prev, items: undefined }));
+    }
+  };
+
+  // Auto-fill all three fields when a catalog suggestion is selected for a row
+  const handleSelectCatalogItem = (index: number, catalogItem: CatalogItem, match: CatalogMatch) => {
+    const updated = formData.items.map((item, i) => {
+      if (i === index) {
+        return {
+          ...item,
+          itemCode: undefined,
+          productType: undefined,
+          description:
+            catalogItem.itemCode && catalogItem.itemName
+              ? `${catalogItem.itemCode} - ${catalogItem.itemName}`
+              : catalogItem.itemName || catalogItem.itemCode,
+          productBrand: match.productBrand,
+          warrantyPeriod: match.warrantyPeriod,
+        };
       }
       return item;
     });
@@ -136,7 +231,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       customerAddress: '',
       date: new Date().toISOString().split('T')[0],
       poNumber: '',
-      items: [{ description: '', productBrand: PRODUCT_BRAND_OPTIONS[0], warrantyPeriod: '5 Years' }],
+      items: [{ description: '', productBrand: '', warrantyPeriod: '' }],
     });
     setErrors({});
   };
@@ -419,12 +514,12 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                     <label className="block text-xs font-bold text-slate-700 mb-1">
                       Product Description <span className="text-red-500">*</span>
                     </label>
-                    <input
-                      type="text"
+                    <ProductDescriptionAutocomplete
                       value={item.description || ''}
-                      onChange={(e) => handleItemChange(index, 'description', e.target.value)}
-                      placeholder="e.g. KEV-SW-101 - 1 Gang 1 Way Switch 10A White"
-                      className="w-full px-3.5 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-xs"
+                      catalog={catalog}
+                      onChange={(val) => handleItemChange(index, 'description', val)}
+                      onSelect={(catalogItem, match) => handleSelectCatalogItem(index, catalogItem, match)}
+                      placeholder="Enter Item Code or Item Name"
                     />
                   </div>
 
@@ -442,25 +537,18 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
                 {/* Bottom Segment: Product Brand + Warranty Period */}
                 <div className="pl-10 grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200/60">
-                  {/* Product Brand Dropdown */}
+                  {/* Product Brand */}
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">
                       Product Brand <span className="text-red-500">*</span>
                     </label>
-                    <div className="relative">
-                      <select
-                        value={item.productBrand || PRODUCT_BRAND_OPTIONS[0]}
-                        onChange={(e) => handleItemChange(index, 'productBrand', e.target.value)}
-                        className="w-full appearance-none px-3 py-2 pr-8 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer shadow-xs"
-                      >
-                        {PRODUCT_BRAND_OPTIONS.map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
+                    <input
+                      type="text"
+                      value={item.productBrand || ''}
+                      onChange={(e) => handleItemChange(index, 'productBrand', e.target.value)}
+                      placeholder="e.g. Switch & Socket"
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-xs"
+                    />
                   </div>
 
                   {/* Warranty Period */}

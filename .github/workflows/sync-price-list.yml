@@ -1,0 +1,78 @@
+name: Sync Price List
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync-price-list:
+    if: github.event_name == 'workflow_dispatch' || github.event.issue.title == 'sync-price-list'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install openpyxl
+
+      - name: Sync price list to public/data/items.json
+        env:
+          PRICE_LIST_URL: ${{ secrets.PRICE_LIST_URL || 'https://drive.google.com/uc?export=download&id=164mM2xKuTeVHUUXqruMT5OFt_MXmVzAi' }}
+        run: python scripts/sync_items.py
+
+      - name: Commit and push items.json if changed
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data/items.json
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes detected in public/data/items.json."
+          else
+            git commit -m "chore: sync price list to public/data/items.json"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment and close triggering issue
+        if: github.event_name == 'issues'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let count = 0;
+            try {
+              const items = JSON.parse(fs.readFileSync('public/data/items.json', 'utf8'));
+              count = Array.isArray(items) ? items.length : 0;
+            } catch (_) {}
+
+            const changed = '${{ steps.commit.outputs.changed }}' === 'true';
+            const body = changed
+              ? `Price list sync complete. Updated \`public/data/items.json\` with **${count}** items.`
+              : `Price list sync complete. \`public/data/items.json\` is already up to date (**${count}** items).`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: 'closed',
+            });

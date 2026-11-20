@@ -24,9 +24,9 @@ export default function App() {
     customerAddress: '',
     items: [
       {
-        description: 'KEV-SW-101 - 1 Gang 1 Way Switch 10A White',
-        productBrand: 'Wiring Devices',
-        warrantyPeriod: '5 Years',
+        description: '',
+        productBrand: '',
+        warrantyPeriod: '',
       },
     ],
     poNumber: '',
