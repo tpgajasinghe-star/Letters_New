@@ -21,7 +21,8 @@ export function getProductWarrantyInfo(item: CatalogItem): CatalogMatch {
   const full = `${category} ${subCategory} ${itemName}`;
 
   // 1. Hotel Key Card & Shaver Socket (MUST run before sunk box / accessory rules)
-  if (includesAny(full, ['hotel key', 'hottel key', 'shaver', 'shv-sct'])) {
+  const hotelShaverKeywords = ['hotel key', 'hottel key', 'shaver', 'shv-sct'];
+  if (includesAny(itemName, hotelShaverKeywords) || includesAny(subCategory, hotelShaverKeywords)) {
     return { productBrand: 'Switch & Socket', warrantyPeriod: '5 Years' };
   }
 
@@ -63,7 +64,7 @@ export function getProductWarrantyInfo(item: CatalogItem): CatalogMatch {
   }
 
   // 4. Wall USB A & C / USB Items
-  if (full.includes('usb')) {
+  if (itemName.includes('usb') || subCategory.includes('usb')) {
     return { productBrand: 'Switch & Socket', warrantyPeriod: '5 Years' };
   }
 
@@ -112,7 +113,7 @@ export function getProductWarrantyInfo(item: CatalogItem): CatalogMatch {
     return { productBrand: 'Solar Tubular Battery', warrantyPeriod: '2 Years' };
   }
 
-  // 7. Lighting & LED
+  // 7. Lighting & LED (match ONLY against itemName before Switch & Socket)
   if (
     includesAny(itemName, [
       'flood light',
@@ -128,6 +129,10 @@ export function getProductWarrantyInfo(item: CatalogItem): CatalogMatch {
       'candle',
       'circuit driver',
       'led indicator',
+      'down light',
+      'downlight',
+      'spot light',
+      'spotlight',
     ])
   ) {
     return { productBrand: 'Lighting', warrantyPeriod: '2 Years' };
@@ -140,11 +145,11 @@ export function getProductWarrantyInfo(item: CatalogItem): CatalogMatch {
   }
   if (
     (itemName.includes('kevilton') && itemName.includes('led')) ||
-    includesAny(itemName, ['kv/led', 'kv / led'])
+    includesAny(itemName, ['kv/led', 'kv / led', 'kv-led'])
   ) {
     return { productBrand: 'Lighting', warrantyPeriod: '3 Years' };
   }
-  if (full.includes('led') || itemName.includes('lamp')) {
+  if (includesAny(itemName, ['bulb', 'lamp', 'led'])) {
     return { productBrand: 'Lighting', warrantyPeriod: '2 Years' };
   }
 
@@ -163,6 +168,7 @@ export function getProductWarrantyInfo(item: CatalogItem): CatalogMatch {
       'video & voice',
       'bell press',
       'blank plate',
+      'flex outlet',
       'mahogany',
       'kumbuk',
       'teak',
@@ -172,6 +178,11 @@ export function getProductWarrantyInfo(item: CatalogItem): CatalogMatch {
     ])
   ) {
     return { productBrand: 'Switch & Socket', warrantyPeriod: 'Lifetime' };
+  }
+
+  // 8.5. Lighting Fallback (category/subCategory LED only after Switch & Socket rules)
+  if (category.includes('led') || subCategory.includes('led')) {
+    return { productBrand: 'Lighting', warrantyPeriod: '2 Years' };
   }
 
   // 9. Fallback

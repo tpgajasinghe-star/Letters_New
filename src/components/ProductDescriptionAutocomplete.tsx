@@ -6,6 +6,9 @@ export interface IndexedCatalogItem {
   item: CatalogItem;
   codeLower: string;
   nameLower: string;
+  categoryLower: string;
+  subCategoryLower: string;
+  brandLower: string;
   combinedDisplay: string;
   combinedLower: string;
   match: CatalogMatch;
@@ -19,7 +22,14 @@ interface ProductDescriptionAutocompleteProps {
   placeholder?: string;
 }
 
-const MAX_SUGGESTIONS = 15;
+function getRelevanceRank(entry: IndexedCatalogItem, fullQuery: string): number {
+  if (entry.codeLower === fullQuery) return 0;
+  if (entry.codeLower.endsWith(fullQuery)) return 1;
+  if (entry.codeLower.includes(fullQuery)) return 2;
+  if (entry.nameLower.startsWith(fullQuery)) return 3;
+  if (entry.nameLower.includes(fullQuery)) return 4;
+  return 5;
+}
 
 export const ProductDescriptionAutocomplete: React.FC<ProductDescriptionAutocompleteProps> = ({
   value,
@@ -39,21 +49,33 @@ export const ProductDescriptionAutocomplete: React.FC<ProductDescriptionAutocomp
       return [];
     }
 
-    const matches: IndexedCatalogItem[] = [];
+    const tokens = query.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) {
+      return [];
+    }
+
+    const ranked: Array<{ entry: IndexedCatalogItem; rank: number; index: number }> = [];
     for (let i = 0; i < catalog.length; i++) {
       const entry = catalog[i];
-      if (
-        entry.codeLower.includes(query) ||
-        entry.nameLower.includes(query) ||
-        entry.combinedLower.includes(query)
-      ) {
-        matches.push(entry);
-        if (matches.length >= MAX_SUGGESTIONS) {
-          break;
-        }
+      const matchesAllTokens = tokens.every(
+        (token) =>
+          entry.combinedLower.includes(token) ||
+          entry.categoryLower.includes(token) ||
+          entry.subCategoryLower.includes(token) ||
+          entry.brandLower.includes(token)
+      );
+
+      if (matchesAllTokens) {
+        ranked.push({
+          entry,
+          rank: getRelevanceRank(entry, query),
+          index: i,
+        });
       }
     }
-    return matches;
+
+    ranked.sort((a, b) => a.rank - b.rank || a.index - b.index);
+    return ranked.map((r) => r.entry);
   }, [value, catalog]);
 
   // Keep highlighted index within valid bounds when suggestions change
@@ -167,45 +189,52 @@ export const ProductDescriptionAutocomplete: React.FC<ProductDescriptionAutocomp
       </div>
 
       {showDropdown && (
-        <ul
-          ref={listRef}
-          role="listbox"
-          className="absolute left-0 right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-xl shadow-slate-900/10 max-h-64 overflow-y-auto py-1 divide-y divide-slate-100"
-        >
-          {suggestions.map((entry, idx) => {
-            const isHighlighted = idx === highlightedIndex;
-            const metaParts = [entry.match.productBrand, entry.match.warrantyPeriod].filter(Boolean);
+        <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-xl shadow-slate-900/10 overflow-hidden">
+          <div className="sticky top-0 z-10 px-3.5 py-1.5 bg-slate-50 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 flex items-center justify-between">
+            <span>
+              {suggestions.length} {suggestions.length === 1 ? 'matching item' : 'matching items'}
+            </span>
+          </div>
+          <ul
+            ref={listRef}
+            role="listbox"
+            className="max-h-72 overflow-y-auto py-1 divide-y divide-slate-100"
+          >
+            {suggestions.map((entry, idx) => {
+              const isHighlighted = idx === highlightedIndex;
+              const metaParts = [entry.match.productBrand, entry.match.warrantyPeriod].filter(Boolean);
 
-            return (
-              <li
-                key={`${entry.item.itemCode}-${idx}`}
-                role="option"
-                aria-selected={isHighlighted}
-                onMouseEnter={() => setHighlightedIndex(idx)}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  handleSelectEntry(entry);
-                }}
-                className={`px-3.5 py-2 cursor-pointer transition-colors ${
-                  isHighlighted ? 'bg-blue-50 text-blue-900' : 'text-slate-800 hover:bg-slate-50'
-                }`}
-              >
-                <div className="text-xs font-semibold leading-snug truncate">
-                  {entry.combinedDisplay}
-                </div>
-                {metaParts.length > 0 && (
-                  <div
-                    className={`text-[11px] mt-0.5 leading-tight ${
-                      isHighlighted ? 'text-blue-700/80' : 'text-slate-500'
-                    }`}
-                  >
-                    {metaParts.join(' · ')}
+              return (
+                <li
+                  key={`${entry.item.itemCode}-${idx}`}
+                  role="option"
+                  aria-selected={isHighlighted}
+                  onMouseEnter={() => setHighlightedIndex(idx)}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    handleSelectEntry(entry);
+                  }}
+                  className={`px-3.5 py-2 cursor-pointer transition-colors ${
+                    isHighlighted ? 'bg-blue-50 text-blue-900' : 'text-slate-800 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="text-xs font-semibold leading-snug truncate">
+                    {entry.combinedDisplay}
                   </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+                  {metaParts.length > 0 && (
+                    <div
+                      className={`text-[11px] mt-0.5 leading-tight ${
+                        isHighlighted ? 'text-blue-700/80' : 'text-slate-500'
+                      }`}
+                    >
+                      {metaParts.join(' · ')}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
     </div>
   );

@@ -21,14 +21,34 @@ USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
+LED_SECTION_PREFIXES = (
+    "led -",
+    "kv-led",
+    "flood light",
+    "panal light",
+    "panel light",
+    "circuit driver",
+)
+
+SWITCH_SOCKET_RESET_PREFIXES = (
+    "usb a&c",
+    "shaver socket",
+    "hottel key",
+    "hotel key",
+    "dnd",
+    "intremediate",
+    "intermediate",
+)
+
 
 def clean_text(value: Any) -> str:
-    """Convert cell value to string, remove non-breaking spaces, and trim whitespace."""
+    """Convert cell value to string, normalize non-breaking spaces, and collapse extra whitespace."""
     if value is None:
         return ""
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
-    return str(value).replace("\xa0", " ").strip()
+    text = str(value).replace("\xa0", " ")
+    return " ".join(text.split())
 
 
 def is_numeric_price(value: Any) -> bool:
@@ -64,19 +84,6 @@ def has_no_background_fill(cell: Any) -> bool:
     return False
 
 
-def merge_pipe_separated(existing: str, incoming: str) -> str:
-    """Append incoming text separated by ' | ' if it is not already present."""
-    incoming = incoming.strip()
-    if not incoming:
-        return existing
-    if not existing:
-        return incoming
-    parts = [part.strip() for part in existing.split(" | ") if part.strip()]
-    if incoming.lower() not in {part.lower() for part in parts}:
-        parts.append(incoming)
-    return " | ".join(parts)
-
-
 def download_xlsx(url: str, dest_path: Path) -> None:
     """Download the Excel workbook and verify it starts with a valid PK zip header."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -93,7 +100,7 @@ def download_xlsx(url: str, dest_path: Path) -> None:
 
 
 def parse_workbook(xlsx_path: Path) -> list[dict[str, str]]:
-    """Parse all sheets ('new print' sheets first) and deduplicate/merge by itemCode."""
+    """Parse all sheets ('new print' sheets first) and deduplicate by itemCode without cross-sheet category pollution."""
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     sheet_names = wb.sheetnames
     ordered_sheets = [
@@ -115,36 +122,52 @@ def parse_workbook(xlsx_path: Path) -> list[dict[str, str]]:
             cell_e = ws.cell(row=row_idx, column=5)
 
             code = clean_text(cell_c.value)
-            desc = clean_text(cell_d.value)
+            d_str = clean_text(cell_d.value)
 
             if code.isdigit() and len(code) >= 5:
                 if code not in items_by_code:
                     items_by_code[code] = {
                         "itemCode": code,
-                        "itemName": desc,
+                        "itemName": d_str,
                         "category": cur_main,
                         "subCategory": cur_sub,
                     }
                 else:
                     existing = items_by_code[code]
-                    if not existing["itemName"] and desc:
-                        existing["itemName"] = desc
-                    existing["category"] = merge_pipe_separated(
-                        existing["category"], cur_main
-                    )
-                    existing["subCategory"] = merge_pipe_separated(
-                        existing["subCategory"], cur_sub
-                    )
-            elif desc and desc.lower() != "description":
+                    if not existing["itemName"] and d_str:
+                        existing["itemName"] = d_str
+                    if not existing["category"] and cur_main:
+                        existing["category"] = cur_main
+                    if not existing["subCategory"] and cur_sub:
+                        existing["subCategory"] = cur_sub
+            elif d_str and d_str.lower() != "description":
                 if is_numeric_price(cell_e.value):
                     continue
-                if "circuit driver" in desc.lower():
-                    cur_sub = desc
+
+                d_lower = d_str.lower()
+                main_lower = cur_main.lower()
+
+                if d_lower.startswith("solar tubular"):
+                    cur_main = "Solar Tubular Battery"
+                    cur_sub = d_str
+                elif d_lower.startswith(LED_SECTION_PREFIXES):
+                    if "safetaa" not in main_lower and "led" not in main_lower:
+                        cur_main = "Kevilton LED"
+                    cur_sub = d_str
+                elif "metal enclosure" in d_lower or "plastic enclosure" in d_lower:
+                    cur_main = "Kevilton - Enclosure"
+                    cur_sub = d_str
+                elif d_lower.startswith(SWITCH_SOCKET_RESET_PREFIXES):
+                    if "led" in main_lower:
+                        cur_main = "Switch & Socket"
+                    cur_sub = d_str
+                elif "circuit driver" in d_lower:
+                    cur_sub = d_str
                 elif has_no_background_fill(cell_d):
-                    cur_main = desc
+                    cur_main = d_str
                     cur_sub = ""
                 else:
-                    cur_sub = desc
+                    cur_sub = d_str
 
     wb.close()
     return list(items_by_code.values())

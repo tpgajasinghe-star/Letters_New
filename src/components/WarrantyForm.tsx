@@ -37,6 +37,7 @@ function loadCatalogItems(): Promise<IndexedCatalogItem[]> {
             category: typeof record.category === 'string' ? record.category : '',
             subCategory: typeof record.subCategory === 'string' ? record.subCategory : '',
           };
+          const match = getProductWarrantyInfo(catalogItem);
           const combinedDisplay = itemCode && itemName
             ? `${itemCode} - ${itemName}`
             : itemName || itemCode;
@@ -44,9 +45,12 @@ function loadCatalogItems(): Promise<IndexedCatalogItem[]> {
             item: catalogItem,
             codeLower: itemCode.toLowerCase(),
             nameLower: itemName.toLowerCase(),
+            categoryLower: catalogItem.category.toLowerCase(),
+            subCategoryLower: catalogItem.subCategory.toLowerCase(),
+            brandLower: match.productBrand.toLowerCase(),
             combinedDisplay,
             combinedLower: combinedDisplay.toLowerCase(),
-            match: getProductWarrantyInfo(catalogItem),
+            match,
           });
         }
         cachedCatalog = indexed;
