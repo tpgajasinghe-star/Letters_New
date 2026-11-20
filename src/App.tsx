@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import confetti from 'canvas-confetti';
 import { Header } from './components/Header';
 import { WarrantyForm } from './components/WarrantyForm';
@@ -40,14 +40,46 @@ export default function App() {
   const [lastBlobUrl, setLastBlobUrl] = useState<string | null>(null);
   const [lastFormat, setLastFormat] = useState<'pdf' | 'docx'>('pdf');
 
+  // Sync viewMode transitions with browser Back/Forward navigation
+  useEffect(() => {
+    const currentState = window.history.state;
+    if (!currentState || currentState.viewMode !== 'form') {
+      window.history.replaceState({ ...currentState, viewMode: 'form' }, '');
+    }
+
+    const handlePopState = (event: PopStateEvent) => {
+      const targetView: 'form' | 'preview' =
+        event.state?.viewMode === 'preview' ? 'preview' : 'form';
+      setViewMode(targetView);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, []);
+
   const handleFormChange = (newData: Partial<WarrantyFormData>) => {
     setFormData((prev) => ({ ...prev, ...newData }));
     setDownloadSuccess(false);
   };
 
   const handleFormSubmit = () => {
+    if (viewMode !== 'preview') {
+      window.history.pushState({ viewMode: 'preview' }, '');
+    }
     setViewMode('preview');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleBackToForm = () => {
+    if (window.history.state?.viewMode === 'preview') {
+      window.history.back();
+    } else {
+      setViewMode('form');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   // PDF Download Handler (without header logo, watermark, stamp, signature)
@@ -220,10 +252,7 @@ export default function App() {
           /* Page 2: Direct Live Preview + Download Buttons (No duplicate letter type question) */
           <CertificateSelectionPage
             formData={formData}
-            onBack={() => {
-              setViewMode('form');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
+            onBack={handleBackToForm}
             onDownloadPdf={triggerDownloadPdf}
             onDownloadDocx={triggerDownloadDocx}
             isGenerating={isGenerating}

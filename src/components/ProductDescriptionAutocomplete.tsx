@@ -20,6 +20,7 @@ interface ProductDescriptionAutocompleteProps {
   onChange: (value: string) => void;
   onSelect: (item: CatalogItem, match: CatalogMatch) => void;
   placeholder?: string;
+  inputRef?: React.Ref<HTMLInputElement>;
 }
 
 function getRelevanceRank(entry: IndexedCatalogItem, fullQuery: string): number {
@@ -37,6 +38,7 @@ export const ProductDescriptionAutocomplete: React.FC<ProductDescriptionAutocomp
   onChange,
   onSelect,
   placeholder = 'Enter Item Code or Item Name',
+  inputRef,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -173,6 +175,7 @@ export const ProductDescriptionAutocomplete: React.FC<ProductDescriptionAutocomp
     <div ref={containerRef} className="relative">
       <div className="relative">
         <input
+          ref={inputRef}
           type="text"
           value={value}
           onChange={handleInputChange}

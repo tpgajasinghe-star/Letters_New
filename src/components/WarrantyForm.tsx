@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileText } from 'lucide-react';
 import { WarrantyFormData, ProductItemRow } from '../types';
 import { CatalogItem, CatalogMatch, getProductWarrantyInfo } from '../utils/warrantyRules';
@@ -85,6 +85,10 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
     items?: string;
   }>({});
   const [catalog, setCatalog] = useState<IndexedCatalogItem[]>(() => cachedCatalog || []);
+  const customerAddressRef = useRef<HTMLTextAreaElement>(null);
+  const firstItemInputRef = useRef<HTMLInputElement>(null);
+  const itemsSectionRef = useRef<HTMLDivElement>(null);
+  const dateRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -100,7 +104,9 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
   const isPoCertificate = formData.letterType === 'po_certificate';
 
-  const validate = (): boolean => {
+  type InvalidFieldKey = 'customerAddress' | 'items' | 'date';
+
+  const validate = (): InvalidFieldKey | null => {
     const newErrors: {
       customerAddress?: string;
       date?: string;
@@ -109,9 +115,6 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
     if (!formData.customerAddress.trim()) {
       newErrors.customerAddress = 'Customer / Company address is required.';
-    }
-    if (!formData.date.trim()) {
-      newErrors.date = 'Date of issue is required.';
     }
 
     if (!formData.items || formData.items.length === 0) {
@@ -126,15 +129,49 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       }
     }
 
+    if (!formData.date.trim()) {
+      newErrors.date = 'Date of issue is required.';
+    }
+
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+
+    // Return the first invalid field in visual top-to-bottom order
+    if (newErrors.customerAddress) return 'customerAddress';
+    if (newErrors.items) return 'items';
+    if (newErrors.date) return 'date';
+    return null;
+  };
+
+  const scrollToAndFocusField = (field: InvalidFieldKey) => {
+    requestAnimationFrame(() => {
+      let targetEl: HTMLElement | null = null;
+      if (field === 'customerAddress') {
+        targetEl = customerAddressRef.current;
+      } else if (field === 'items') {
+        targetEl = firstItemInputRef.current || itemsSectionRef.current;
+      } else if (field === 'date') {
+        targetEl = dateRef.current;
+      }
+
+      if (!targetEl) return;
+
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      try {
+        targetEl.focus({ preventScroll: true });
+      } catch {
+        targetEl.focus();
+      }
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (validate()) {
+    const firstInvalidField = validate();
+    if (!firstInvalidField) {
       onSubmit();
+      return;
     }
+    scrollToAndFocusField(firstInvalidField);
   };
 
   // Switch Letter Type handler
@@ -418,6 +455,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
           <div className="relative">
             <textarea
+              ref={customerAddressRef}
               id="customerAddress"
               rows={3}
               value={formData.customerAddress}
@@ -478,7 +516,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
         {/* If Common Draft: 1. Item Code, 2. Description, 3. Period     */}
         {/* If Common Warranty: 1. Product type, 2. Product Brand, 3. Period */}
         {/* ============================================================ */}
-        <div>
+        <div ref={itemsSectionRef}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
@@ -519,6 +557,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                       Product Description <span className="text-red-500">*</span>
                     </label>
                     <ProductDescriptionAutocomplete
+                      inputRef={index === 0 ? firstItemInputRef : undefined}
                       value={item.description || ''}
                       catalog={catalog}
                       onChange={(val) => handleItemChange(index, 'description', val)}
@@ -599,6 +638,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
           <div className="relative">
             <input
+              ref={dateRef}
               type="date"
               id="date"
               value={formData.date}
