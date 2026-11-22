@@ -20,3 +20,48 @@
 .animate-fadeIn {
   animation: fadeIn 0.25s ease-out forwards;
 }
+
+@media print {
+  @page {
+    size: letter portrait;
+    margin: 1in;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  #warranty-letter-paper {
+    max-width: none !important;
+    width: 100% !important;
+    margin: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+
+  #warranty-letter-paper-inner {
+    padding: 0 !important;
+  }
+
+  .inline-edit-field,
+  textarea,
+  input {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    overflow: hidden !important;
+    resize: none !important;
+  }
+}

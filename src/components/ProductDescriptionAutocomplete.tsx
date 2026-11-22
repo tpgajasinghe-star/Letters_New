@@ -1,18 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import { CatalogItem, CatalogMatch } from '../utils/warrantyRules';
+import { IndexedCatalogItem, filterAndRankCatalog } from '../utils/catalogSearch';
 
-export interface IndexedCatalogItem {
-  item: CatalogItem;
-  codeLower: string;
-  nameLower: string;
-  categoryLower: string;
-  subCategoryLower: string;
-  brandLower: string;
-  combinedDisplay: string;
-  combinedLower: string;
-  match: CatalogMatch;
-}
+export type { IndexedCatalogItem };
 
 interface ProductDescriptionAutocompleteProps {
   value: string;
@@ -21,15 +12,6 @@ interface ProductDescriptionAutocompleteProps {
   onSelect: (item: CatalogItem, match: CatalogMatch) => void;
   placeholder?: string;
   inputRef?: React.Ref<HTMLInputElement>;
-}
-
-function getRelevanceRank(entry: IndexedCatalogItem, fullQuery: string): number {
-  if (entry.codeLower === fullQuery) return 0;
-  if (entry.codeLower.endsWith(fullQuery)) return 1;
-  if (entry.codeLower.includes(fullQuery)) return 2;
-  if (entry.nameLower.startsWith(fullQuery)) return 3;
-  if (entry.nameLower.includes(fullQuery)) return 4;
-  return 5;
 }
 
 export const ProductDescriptionAutocomplete: React.FC<ProductDescriptionAutocompleteProps> = ({
@@ -45,40 +27,7 @@ export const ProductDescriptionAutocomplete: React.FC<ProductDescriptionAutocomp
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
-  const suggestions = useMemo(() => {
-    const query = value.trim().toLowerCase();
-    if (query.length < 2 || catalog.length === 0) {
-      return [];
-    }
-
-    const tokens = query.split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) {
-      return [];
-    }
-
-    const ranked: Array<{ entry: IndexedCatalogItem; rank: number; index: number }> = [];
-    for (let i = 0; i < catalog.length; i++) {
-      const entry = catalog[i];
-      const matchesAllTokens = tokens.every(
-        (token) =>
-          entry.combinedLower.includes(token) ||
-          entry.categoryLower.includes(token) ||
-          entry.subCategoryLower.includes(token) ||
-          entry.brandLower.includes(token)
-      );
-
-      if (matchesAllTokens) {
-        ranked.push({
-          entry,
-          rank: getRelevanceRank(entry, query),
-          index: i,
-        });
-      }
-    }
-
-    ranked.sort((a, b) => a.rank - b.rank || a.index - b.index);
-    return ranked.map((r) => r.entry);
-  }, [value, catalog]);
+  const suggestions = useMemo(() => filterAndRankCatalog(catalog, value), [value, catalog]);
 
   // Keep highlighted index within valid bounds when suggestions change
   useEffect(() => {

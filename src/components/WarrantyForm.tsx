@@ -1,68 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileText } from 'lucide-react';
 import { WarrantyFormData, ProductItemRow } from '../types';
-import { CatalogItem, CatalogMatch, getProductWarrantyInfo } from '../utils/warrantyRules';
-import { IndexedCatalogItem, ProductDescriptionAutocomplete } from './ProductDescriptionAutocomplete';
-
-let cachedCatalog: IndexedCatalogItem[] | null = null;
-let catalogFetchPromise: Promise<IndexedCatalogItem[]> | null = null;
-
-function loadCatalogItems(): Promise<IndexedCatalogItem[]> {
-  if (cachedCatalog) {
-    return Promise.resolve(cachedCatalog);
-  }
-  if (!catalogFetchPromise) {
-    const baseUrl = import.meta.env.BASE_URL || '/';
-    const dataUrl = `${baseUrl.replace(/\/$/, '')}/data/items.json`;
-    catalogFetchPromise = fetch(dataUrl)
-      .then((res) => {
-        if (!res.ok) return [];
-        return res.json();
-      })
-      .then((raw: unknown) => {
-        if (!Array.isArray(raw)) {
-          cachedCatalog = [];
-          return [];
-        }
-        const indexed: IndexedCatalogItem[] = [];
-        for (const entry of raw) {
-          if (!entry || typeof entry !== 'object') continue;
-          const record = entry as Partial<CatalogItem>;
-          const itemCode = typeof record.itemCode === 'string' ? record.itemCode.trim() : '';
-          const itemName = typeof record.itemName === 'string' ? record.itemName.trim() : '';
-          if (!itemCode && !itemName) continue;
-          const catalogItem: CatalogItem = {
-            itemCode,
-            itemName,
-            category: typeof record.category === 'string' ? record.category : '',
-            subCategory: typeof record.subCategory === 'string' ? record.subCategory : '',
-          };
-          const match = getProductWarrantyInfo(catalogItem);
-          const combinedDisplay = itemCode && itemName
-            ? `${itemCode} - ${itemName}`
-            : itemName || itemCode;
-          indexed.push({
-            item: catalogItem,
-            codeLower: itemCode.toLowerCase(),
-            nameLower: itemName.toLowerCase(),
-            categoryLower: catalogItem.category.toLowerCase(),
-            subCategoryLower: catalogItem.subCategory.toLowerCase(),
-            brandLower: match.productBrand.toLowerCase(),
-            combinedDisplay,
-            combinedLower: combinedDisplay.toLowerCase(),
-            match,
-          });
-        }
-        cachedCatalog = indexed;
-        return indexed;
-      })
-      .catch(() => {
-        cachedCatalog = [];
-        return [];
-      });
-  }
-  return catalogFetchPromise;
-}
+import { CatalogItem, CatalogMatch } from '../utils/warrantyRules';
+import { IndexedCatalogItem, getCachedCatalog, loadCatalogItems } from '../utils/catalogSearch';
+import { ProductDescriptionAutocomplete } from './ProductDescriptionAutocomplete';
 
 interface WarrantyFormProps {
   formData: WarrantyFormData;
@@ -84,7 +25,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
     date?: string;
     items?: string;
   }>({});
-  const [catalog, setCatalog] = useState<IndexedCatalogItem[]>(() => cachedCatalog || []);
+  const [catalog, setCatalog] = useState<IndexedCatalogItem[]>(() => getCachedCatalog());
   const customerAddressRef = useRef<HTMLTextAreaElement>(null);
   const firstItemInputRef = useRef<HTMLInputElement>(null);
   const itemsSectionRef = useRef<HTMLDivElement>(null);
@@ -251,6 +192,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
           { description: 'KEV-MOD-01 - Modular Switches and Socket Outlets', productBrand: 'Wiring Devices', warrantyPeriod: '5 Years' },
           { description: 'KEV-MCB-6K - Miniature Circuit Breakers (MCB) 6kA', productBrand: 'Circuit Protection Devices', warrantyPeriod: '2 Years' },
         ],
+        wordingOverrides: undefined,
       });
     } else {
       onChange({
@@ -262,6 +204,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
           { description: 'KEV-SK-202 - 13A Switched Socket Outlet Single', productBrand: 'Wiring Devices', warrantyPeriod: '2 Years' },
           { description: 'KEV-MCB-32 - Single Pole MCB 32A 6kA Curve C', productBrand: 'Circuit Protection Devices', warrantyPeriod: '2 Years' },
         ],
+        wordingOverrides: undefined,
       });
     }
     setErrors({});
@@ -273,6 +216,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       date: new Date().toISOString().split('T')[0],
       poNumber: '',
       items: [{ description: '', productBrand: '', warrantyPeriod: '' }],
+      wordingOverrides: undefined,
     });
     setErrors({});
   };

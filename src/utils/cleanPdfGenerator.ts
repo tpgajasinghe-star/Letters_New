@@ -1,7 +1,12 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { WarrantyFormData, WarrantyTableRow } from '../types';
-import { formatDateForCertificate, parseCustomerAddress, getCommonWarrantySubject } from './templateParser';
+import {
+  KEVILTON_COMPANY_NAME,
+  StyledSpan,
+  resolveLetterContent,
+  splitStyledSpans,
+} from './letterContent';
 
 /**
  * Formats the first column "Product Description",
@@ -73,11 +78,6 @@ export function getProductBrandSubject(rows: WarrantyTableRow[]): string {
   return `${brands.slice(0, -1).join(', ')} & ${brands[brands.length - 1]}`;
 }
 
-interface StyledSpan {
-  text: string;
-  bold?: boolean;
-}
-
 /**
  * Renders paragraphs with mixed normal and bold text spans,
  * wrapping words at maxWidth while preserving exact baseline and spacing.
@@ -93,19 +93,25 @@ function renderRichParagraph(
 ): number {
   doc.setFontSize(fontSize);
 
-  // Tokenize into words while keeping styling
-  const words: { text: string; bold: boolean; isSpace?: boolean }[] = [];
+  // Tokenize into words while keeping styling (preserving explicit newlines)
+  const words: { text: string; bold: boolean; isSpace?: boolean; isNewline?: boolean }[] = [];
   for (const span of spans) {
     const isBold = !!span.bold;
-    const parts = span.text.split(/(\s+)/);
-    for (const part of parts) {
-      if (!part) continue;
-      if (/^\s+$/.test(part)) {
-        words.push({ text: ' ', bold: isBold, isSpace: true });
-      } else {
-        words.push({ text: part, bold: isBold, isSpace: false });
+    const rawLines = span.text.split('\n');
+    rawLines.forEach((rawLine, lineIdx) => {
+      if (lineIdx > 0) {
+        words.push({ text: '', bold: isBold, isNewline: true });
       }
-    }
+      const parts = rawLine.split(/(\s+)/);
+      for (const part of parts) {
+        if (!part) continue;
+        if (/^\s+$/.test(part)) {
+          words.push({ text: ' ', bold: isBold, isSpace: true });
+        } else {
+          words.push({ text: part, bold: isBold, isSpace: false });
+        }
+      }
+    });
   }
 
   interface LineChunk {
@@ -119,6 +125,16 @@ function renderRichParagraph(
   let currentLineWidth = 0;
 
   for (const item of words) {
+    if (item.isNewline) {
+      while (currentLine.length > 0 && currentLine[currentLine.length - 1].isSpace) {
+        currentLineWidth -= currentLine.pop()!.width;
+      }
+      lines.push(currentLine);
+      currentLine = [];
+      currentLineWidth = 0;
+      continue;
+    }
+
     doc.setFont('times', item.bold ? 'bold' : 'normal');
     const w = doc.getTextWidth(item.text);
 
@@ -181,10 +197,9 @@ export async function generateCleanWarrantyPdf(formData: WarrantyFormData): Prom
     format: 'letter', // 8.5 x 11 inches (215.9mm x 279.4mm)
   });
 
-  const isPoCertificate = formData.letterType === 'po_certificate';
-  const parsedAddr = parseCustomerAddress(formData.customerAddress);
   const rows = getWarrantyRows(formData);
-  const formattedDate = formatDateForCertificate(formData.date);
+  const brandSubject = getProductBrandSubject(rows);
+  const content = resolveLetterContent(formData, rows, brandSubject);
 
   // Normal 1-inch margins on all 4 sides (1" = 25.4 mm)
   const marginX = 25.4; // 1 inch Left & Right
@@ -198,11 +213,11 @@ export async function generateCleanWarrantyPdf(formData: WarrantyFormData): Prom
   doc.setFont('times', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(0, 0, 0);
-  doc.text(formattedDate || '', marginX, cursorY);
+  doc.text(content.dateText || '', marginX, cursorY);
   cursorY += 9;
 
   // 2. Recipient Address Block (First line like Mr./Ms. [Customer Name] is bold)
-  const addrLines = parsedAddr.formattedLines;
+  const addrLines = content.addressLines;
   for (let i = 0; i < addrLines.length; i++) {
     doc.setFont('times', i === 0 ? 'bold' : 'normal');
     doc.text(addrLines[i], marginX, cursorY);
@@ -210,61 +225,58 @@ export async function generateCleanWarrantyPdf(formData: WarrantyFormData): Prom
   }
   cursorY += 4;
 
-  if (isPoCertificate) {
+  if (content.isPoCertificate) {
     // ==========================================
     // 2. Common Warranty Certificate (PO Based)
-    // Table Columns: 1. Product type | 2. Product Brand | 3. Warranty Period
     // ==========================================
     // Subject Line (Entire line bold)
     doc.setFont('times', 'bold');
     doc.setFontSize(11.5);
-    const subjectText = getCommonWarrantySubject(formData.poNumber);
-    const subjectLines = doc.splitTextToSize(subjectText, printableWidth);
+    const subjectLines = doc.splitTextToSize(content.subject, printableWidth);
     doc.text(subjectLines, marginX, cursorY);
     cursorY += subjectLines.length * 5.8 + 4;
 
     // Salutation (Bold in template)
     doc.setFont('times', 'bold');
     doc.setFontSize(11);
-    doc.text('Dear Sir/Madam,', marginX, cursorY);
+    doc.text(content.salutation, marginX, cursorY);
     cursorY += 7.5;
 
-    // Opening Paragraph 1 (with "Kevilton Electrical Products (Pvt.) Ltd." bold)
-    cursorY = renderRichParagraph(
-      doc,
-      [
-        { text: 'We, ' },
-        { text: 'Kevilton Electrical Products (Pvt.) Ltd.', bold: true },
-        { text: ', sincerely appreciate the trust you have placed in our products. We are committed to providing high-quality products that comply with national and international standards.' },
-      ],
-      marginX,
-      cursorY,
-      printableWidth,
-      10.5,
-      5.2
-    ) + 3.5;
+    // Opening Paragraph 1
+    if (content.introParagraph1.trim()) {
+      cursorY =
+        renderRichParagraph(
+          doc,
+          splitStyledSpans(content.introParagraph1, [KEVILTON_COMPANY_NAME]),
+          marginX,
+          cursorY,
+          printableWidth,
+          10.5,
+          5.2
+        ) + 3.5;
+    }
 
-    // Opening Paragraph 2 (with Purchase Order number bold)
-    const poNumText = formData.poNumber?.trim() || '[PO Number]';
-    cursorY = renderRichParagraph(
-      doc,
-      [
-        { text: 'We hereby confirm that the following products supplied against Purchase Order No. ' },
-        { text: poNumText, bold: true },
-        { text: ' are covered under the Kevilton warranty program.' },
-      ],
-      marginX,
-      cursorY,
-      printableWidth,
-      10.5,
-      5.2
-    ) + 4;
+    // Opening Paragraph 2
+    if (content.introParagraph2.trim()) {
+      cursorY =
+        renderRichParagraph(
+          doc,
+          splitStyledSpans(content.introParagraph2, [content.poNumberText]),
+          marginX,
+          cursorY,
+          printableWidth,
+          10.5,
+          5.2
+        ) + 4;
+    }
 
     // Section header (Bold in template)
-    doc.setFont('times', 'bold');
-    doc.setFontSize(10.5);
-    doc.text('Items Covered Under This Warranty:', marginX, cursorY);
-    cursorY += 4.5;
+    if (content.itemsHeader.trim()) {
+      doc.setFont('times', 'bold');
+      doc.setFontSize(10.5);
+      doc.text(content.itemsHeader, marginX, cursorY);
+      cursorY += 4.5;
+    }
 
     // Table: 1. Product Description | 2. Product Brand | 3. Warranty Period (Plain white header, no shading)
     const tableData = rows.map((r) => [
@@ -307,86 +319,75 @@ export async function generateCleanWarrantyPdf(formData: WarrantyFormData): Prom
     cursorY = doc.lastAutoTable.finalY + 6.5;
 
     // Note & Disclaimers
-    cursorY = renderRichParagraph(
-      doc,
-      [
-        { text: 'Note: ', bold: true },
-        { text: 'The above warranty covers manufacturing defects under normal installation and operating conditions from the date of purchase.' },
-      ],
-      marginX,
-      cursorY,
-      printableWidth,
-      10.5,
-      5.0
-    ) + 3;
+    content.bodyParagraphs.forEach((paragraph, idx) => {
+      if (!paragraph.trim()) return;
+      const boldTerms = idx === 0 ? ['Note:'] : [];
+      const spacingAfter = idx === content.bodyParagraphs.length - 1 ? 4 : 3;
+      cursorY =
+        renderRichParagraph(
+          doc,
+          splitStyledSpans(paragraph, boldTerms),
+          marginX,
+          cursorY,
+          printableWidth,
+          10.5,
+          5.0
+        ) + spacingAfter;
+    });
 
-    const discP =
-      'This warranty does not cover defects or damage resulting from improper installation, misuse, accidents, unauthorized modifications, negligence, or external causes. Proof of purchase and relevant product identification details are required for any warranty claim.';
-    const discLines = doc.splitTextToSize(discP, printableWidth);
-    doc.text(discLines, marginX, cursorY);
-    cursorY += discLines.length * 5.0 + 3;
+    doc.setFont('times', 'normal');
+    doc.setFontSize(10.5);
+    if (content.thankYou.trim()) {
+      doc.text(content.thankYou, marginX, cursorY);
+      cursorY += 6.5;
+    }
 
-    const contP =
-      'Should you require any further information regarding this warranty, please do not hesitate to contact us.';
-    const contLines = doc.splitTextToSize(contP, printableWidth);
-    doc.text(contLines, marginX, cursorY);
-    cursorY += contLines.length * 5.0 + 4;
-
-    doc.text('Thank you.', marginX, cursorY);
-    cursorY += 6.5;
-
-    doc.text('Yours faithfully,', marginX, cursorY);
-    cursorY += 16;
+    if (content.closing.trim()) {
+      doc.text(content.closing, marginX, cursorY);
+      cursorY += 16;
+    }
 
     // Clean text signature line (no rubber stamp, no signature image)
     doc.setFont('times', 'normal');
     doc.setFontSize(10);
-    doc.text('……………………..', marginX, cursorY);
+    doc.text(content.signatureLine, marginX, cursorY);
     cursorY += 5;
 
     doc.setFont('times', 'bold');
-    doc.text('Manager – Quality Assurance', marginX, cursorY);
+    doc.text(content.signatoryTitle, marginX, cursorY);
     cursorY += 5;
-    doc.text('Kevilton Electrical Products (Pvt.) Ltd.', marginX, cursorY);
-
+    doc.text(content.signatoryCompany, marginX, cursorY);
   } else {
     // ==========================================
     // 1. Common Draft Warranty Certificate (Declaration)
-    // Table Columns: 1. Item Code | 2. Description | 3. Warranty Period
     // ==========================================
 
     // Salutation (Bold in template)
     doc.setFont('times', 'bold');
     doc.setFontSize(11);
-    doc.text('Dear Sir/Madam,', marginX, cursorY);
+    doc.text(content.salutation, marginX, cursorY);
     cursorY += 8;
 
     // Heading: Warranty Declaration for [Product Brand] (Bold in template)
-    const brandSubject = getProductBrandSubject(rows);
     doc.setFont('times', 'bold');
     doc.setFontSize(11.5);
-    const titleText = `Warranty Declaration for ${brandSubject}`;
-    const titleLines = doc.splitTextToSize(titleText, printableWidth);
+    const titleLines = doc.splitTextToSize(content.subject, printableWidth);
     doc.text(titleLines, marginX, cursorY);
     cursorY += titleLines.length * 5.5 + 4;
 
     // Paragraph 1 (with company name and Kevilton bold)
-    const company = parsedAddr.companyName || '[Company Name]';
-    cursorY = renderRichParagraph(
-      doc,
-      [
-        { text: 'With reference to the product supplied to ' },
-        { text: company, bold: true },
-        { text: ', we hereby confirm that ' },
-        { text: 'Kevilton Electrical Products (Pvt.) Ltd.', bold: true },
-        { text: ' provides the following warranty for the product detailed below:' },
-      ],
-      marginX,
-      cursorY,
-      printableWidth,
-      10.5,
-      5.0
-    ) + 3.5;
+    if (content.introParagraph1.trim()) {
+      cursorY =
+        renderRichParagraph(
+          doc,
+          splitStyledSpans(content.introParagraph1, [content.companyName, KEVILTON_COMPANY_NAME]),
+          marginX,
+          cursorY,
+          printableWidth,
+          10.5,
+          5.0
+        ) + 3.5;
+    }
 
     // Table: 1. Product Description | 2. Product Brand | 3. Warranty Period (Plain white header, no shading)
     const tableData = rows.map((r) => [
@@ -428,93 +429,51 @@ export async function generateCleanWarrantyPdf(formData: WarrantyFormData): Prom
     // @ts-expect-error autoTable adds lastAutoTable to doc
     cursorY = doc.lastAutoTable.finalY + 6.5;
 
-    // Body Legal Paragraphs exactly as sample
-    // Clause 1
-    cursorY = renderRichParagraph(
-      doc,
-      [{ text: 'The above warranty covers manufacturing defects arising under normal installation and operating conditions from the date of delivery.' }],
-      marginX,
-      cursorY,
-      printableWidth,
-      10,
-      4.6
-    ) + 2.6;
-
-    // Clause 2 (with Kevilton bold)
-    cursorY = renderRichParagraph(
-      doc,
-      [
-        { text: 'During the warranty period, ' },
-        { text: 'Kevilton Electrical Products (Pvt.) Ltd.', bold: true },
-        { text: ' will, at its discretion, repair or replace any product found to be defective due to manufacturing faults.' },
-      ],
-      marginX,
-      cursorY,
-      printableWidth,
-      10,
-      4.6
-    ) + 2.6;
-
-    // Clause 3
-    cursorY = renderRichParagraph(
-      doc,
-      [{ text: 'This warranty does not cover defects or damage resulting from improper installation, misuse, accidents, unauthorized modification, negligence, incorrect handling, external causes, or normal wear and tear. Proof of purchase and relevant product identification details may be required for any warranty claim.' }],
-      marginX,
-      cursorY,
-      printableWidth,
-      10,
-      4.6
-    ) + 2.6;
-
-    // Clause 4 (with Kevilton bold)
-    cursorY = renderRichParagraph(
-      doc,
-      [
-        { text: 'The decision of ' },
-        { text: 'Kevilton Electrical Products (Pvt.) Ltd.', bold: true },
-        { text: ' shall be final regarding any warranty claim or dispute that may arise. This letter is issued upon request as a warranty reference for the above-mentioned product.' },
-      ],
-      marginX,
-      cursorY,
-      printableWidth,
-      10,
-      4.6
-    ) + 2.6;
-
-    // Clause 5
-    cursorY = renderRichParagraph(
-      doc,
-      [{ text: 'Should you require any further information regarding this warranty, please do not hesitate to contact us.' }],
-      marginX,
-      cursorY,
-      printableWidth,
-      10,
-      4.6
-    ) + 3.5;
+    // Body Legal Paragraphs
+    content.bodyParagraphs.forEach((paragraph, idx) => {
+      if (!paragraph.trim()) return;
+      const spacingAfter = idx === content.bodyParagraphs.length - 1 ? 3.5 : 2.6;
+      cursorY =
+        renderRichParagraph(
+          doc,
+          splitStyledSpans(paragraph, [KEVILTON_COMPANY_NAME]),
+          marginX,
+          cursorY,
+          printableWidth,
+          10,
+          4.6
+        ) + spacingAfter;
+    });
 
     cursorY += 1;
     doc.setFont('times', 'normal');
     doc.setFontSize(10.5);
-    doc.text('Thank you.', marginX, cursorY);
-    cursorY += 5.5;
+    if (content.thankYou.trim()) {
+      doc.text(content.thankYou, marginX, cursorY);
+      cursorY += 5.5;
+    }
 
     doc.setFont('times', 'bold');
-    doc.text('Yours Faithfully,', marginX, cursorY);
-    cursorY += 5.5;
+    if (content.closing.trim()) {
+      doc.text(content.closing, marginX, cursorY);
+      cursorY += 5.5;
+    }
 
-    doc.text('Kevilton Electrical Products (Pvt.) Ltd.', marginX, cursorY);
-    cursorY += 16;
+    if (content.closingCompany.trim()) {
+      doc.text(content.closingCompany, marginX, cursorY);
+      cursorY += 16;
+    }
 
     // Clean text signature line (no rubber stamp, no signature image)
     doc.setFont('times', 'normal');
     doc.setFontSize(10);
-    doc.text('.............................................', marginX, cursorY);
+    doc.text(content.signatureLine, marginX, cursorY);
     cursorY += 5;
 
     doc.setFont('times', 'bold');
-    doc.text('Manager – Quality Assurance', marginX, cursorY);
+    doc.text(content.signatoryTitle, marginX, cursorY);
     cursorY += 5;
-    doc.text('Kevilton Electrical Products (Pvt.) Ltd.', marginX, cursorY);
+    doc.text(content.signatoryCompany, marginX, cursorY);
   }
 
   return doc.output('blob');

@@ -42,9 +42,15 @@ export default function App() {
 
   // Sync viewMode transitions with browser Back/Forward navigation
   useEffect(() => {
-    const currentState = window.history.state;
-    if (!currentState || currentState.viewMode !== 'form') {
-      window.history.replaceState({ ...currentState, viewMode: 'form' }, '');
+    try {
+      const currentState = window.history.state;
+      const baseState =
+        currentState && typeof currentState === 'object' ? currentState : {};
+      if (baseState.viewMode !== 'form') {
+        window.history.replaceState({ ...baseState, viewMode: 'form' }, '');
+      }
+    } catch {
+      // Ignore history API restrictions in sandboxed environments
     }
 
     const handlePopState = (event: PopStateEvent) => {
@@ -61,25 +67,52 @@ export default function App() {
   }, []);
 
   const handleFormChange = (newData: Partial<WarrantyFormData>) => {
-    setFormData((prev) => ({ ...prev, ...newData }));
+    setFormData((prev) => {
+      const next: WarrantyFormData = { ...prev, ...newData };
+
+      // Reset custom template wording overrides if the user switches Letter Type
+      if (newData.letterType !== undefined && newData.letterType !== prev.letterType) {
+        next.wordingOverrides = undefined;
+      } else if (
+        newData.date !== undefined &&
+        newData.date !== prev.date &&
+        newData.wordingOverrides === undefined &&
+        prev.wordingOverrides?.dateDisplay !== undefined
+      ) {
+        // Clear custom inline date display when the date is changed from the form picker
+        const rest = { ...prev.wordingOverrides };
+        delete rest.dateDisplay;
+        next.wordingOverrides = Object.keys(rest).length > 0 ? rest : undefined;
+      }
+
+      return next;
+    });
     setDownloadSuccess(false);
   };
 
   const handleFormSubmit = () => {
     if (viewMode !== 'preview') {
-      window.history.pushState({ viewMode: 'preview' }, '');
+      try {
+        window.history.pushState({ viewMode: 'preview' }, '');
+      } catch {
+        // Ignore history API restrictions in sandboxed environments
+      }
     }
     setViewMode('preview');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleBackToForm = () => {
-    if (window.history.state?.viewMode === 'preview') {
-      window.history.back();
-    } else {
-      setViewMode('form');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      if (window.history.state?.viewMode === 'preview') {
+        window.history.back();
+        return;
+      }
+    } catch {
+      // Fall through to direct state switch
     }
+    setViewMode('form');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // PDF Download Handler (without header logo, watermark, stamp, signature)
@@ -168,15 +201,15 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F0F5FA] flex flex-col selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen bg-[#F0F5FA] flex flex-col selection:bg-blue-600 selection:text-white print:min-h-0 print:bg-white">
       {/* Top Bar Header */}
       <Header />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+      <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 print:max-w-none print:p-0 print:m-0">
         {/* Success Banner if document generated */}
         {downloadSuccess && (
-          <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xs animate-fadeIn">
+          <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xs animate-fadeIn no-print">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
                 <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
@@ -252,6 +285,7 @@ export default function App() {
           /* Page 2: Direct Live Preview + Download Buttons (No duplicate letter type question) */
           <CertificateSelectionPage
             formData={formData}
+            onChangeFormData={handleFormChange}
             onBack={handleBackToForm}
             onDownloadPdf={triggerDownloadPdf}
             onDownloadDocx={triggerDownloadDocx}

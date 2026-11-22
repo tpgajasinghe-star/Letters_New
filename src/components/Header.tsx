@@ -4,7 +4,7 @@ import { KeviltonLogo } from './KeviltonLogo';
 
 export const Header: React.FC = () => {
   return (
-    <header className="bg-gradient-to-r from-[#07366B] via-[#094285] to-[#0A4B95] text-white shadow-md">
+    <header className="bg-gradient-to-r from-[#07366B] via-[#094285] to-[#0A4B95] text-white shadow-md print:hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
         {/* Left: Brand & App Title */}
         <div className="flex items-center">

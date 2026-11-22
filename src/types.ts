@@ -28,6 +28,22 @@ export interface ProductItemRow {
   productType?: string;
 }
 
+export interface LetterWordingOverrides {
+  dateDisplay?: string;
+  salutation?: string;
+  subject?: string;
+  introParagraph1?: string;
+  introParagraph2?: string;
+  itemsHeader?: string;
+  bodyParagraphs?: string[];
+  thankYou?: string;
+  closing?: string;
+  closingCompany?: string;
+  signatureLine?: string;
+  signatoryTitle?: string;
+  signatoryCompany?: string;
+}
+
 export interface WarrantyFormData {
   letterType: WarrantyLetterType;
   date: string;
@@ -36,6 +52,9 @@ export interface WarrantyFormData {
 
   // Structured product rows
   items: ProductItemRow[];
+
+  // Optional inline Live Edit Mode overrides for letter template wording
+  wordingOverrides?: LetterWordingOverrides;
 
   // Backward compatibility fields
   itemSupplied?: string;
