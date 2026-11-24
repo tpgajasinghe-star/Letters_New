@@ -197,16 +197,25 @@ export function formatDateForCertificate(dateStr: string): string {
  * Returns the subject title for Common Warranty Certificate without "Subject: " word,
  * with the PO number appended to the end of the subject title.
  */
-export function getCommonWarrantySubject(poNumber?: string): string {
+export function getCommonWarrantySubject(poNumber?: string, refType?: 'PO' | 'Invoice'): string {
   const trimmed = poNumber?.trim();
+  const label = refType === 'Invoice' ? 'Invoice' : 'PO';
   if (!trimmed) {
-    return 'Warranty Certificate for Kevilton Products Supplied Against PO [PO Number]';
+    return `Warranty Certificate for Kevilton Products Supplied Against ${label} [${label} Number]`;
   }
   if (/^against\s+/i.test(trimmed)) {
     return `Warranty Certificate for Kevilton Products Supplied ${trimmed}`;
   }
-  if (/^po\b|^po[-:/]/i.test(trimmed)) {
-    return `Warranty Certificate for Kevilton Products Supplied Against ${trimmed}`;
+  if (refType === 'Invoice') {
+    if (/^inv\b|^invoice\b|^inv[-:/]/i.test(trimmed)) {
+      return `Warranty Certificate for Kevilton Products Supplied Against ${trimmed}`;
+    }
+    return `Warranty Certificate for Kevilton Products Supplied Against Invoice ${trimmed}`;
+  } else {
+    if (/^po\b|^po[-:/]/i.test(trimmed)) {
+      return `Warranty Certificate for Kevilton Products Supplied Against ${trimmed}`;
+    }
+    return `Warranty Certificate for Kevilton Products Supplied Against PO ${trimmed}`;
   }
-  return `Warranty Certificate for Kevilton Products Supplied Against PO ${trimmed}`;
 }
+

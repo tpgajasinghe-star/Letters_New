@@ -218,7 +218,7 @@ export default function App() {
                 <h4 className="font-bold text-sm text-emerald-900">
                   {formData.letterType === 'po_certificate'
                     ? 'Common Warranty Certificate'
-                    : 'Common Draft Warranty Certificate'}{' '}
+                    : 'Draft Warranty Certificate'}{' '}
                   Generated ({lastFormat.toUpperCase()})!
                 </h4>
                 <p className="text-xs text-emerald-700">

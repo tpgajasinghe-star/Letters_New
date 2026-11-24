@@ -375,7 +375,7 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
             <CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />
             {content.isPoCertificate
               ? '2. Common Warranty Certificate'
-              : '1. Common Draft Warranty Certificate'}
+              : '1. Draft Warranty Certificate'}
           </span>
         </div>
       </div>
@@ -386,7 +386,7 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
           <h2 className="text-xl font-extrabold text-[#0D2447] tracking-tight">
             {content.isPoCertificate
               ? 'Common Warranty Certificate'
-              : 'Common Draft Warranty Certificate'}
+              : 'Draft Warranty Certificate'}
           </h2>
           <p className="text-slate-600 text-xs sm:text-sm mt-0.5">
             Pristine document generated matching your exact sample format without header, logo,

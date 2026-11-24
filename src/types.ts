@@ -44,11 +44,22 @@ export interface LetterWordingOverrides {
   signatoryCompany?: string;
 }
 
+export type ReferenceTypeOption = 'projectName' | 'companyName' | 'customerName';
+export type PoInvoiceTypeOption = 'PO' | 'Invoice';
+export type NoteOption = 'withoutNote' | 'withNote';
+
 export interface WarrantyFormData {
   letterType: WarrantyLetterType;
   date: string;
   customerAddress: string;
   poNumber?: string;
+
+  // New features
+  referenceType?: ReferenceTypeOption;
+  referenceName?: string;
+  poInvoiceType?: PoInvoiceTypeOption;
+  noteOption?: NoteOption;
+  noteContent?: string;
 
   // Structured product rows
   items: ProductItemRow[];

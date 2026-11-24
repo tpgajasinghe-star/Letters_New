@@ -1,0 +1,32 @@
+[
+  {
+    "date": "2026-03-15",
+    "customerName": "Mr. Kasun Rajapaksha",
+    "companyName": "Apex Construction & Engineering (Pvt) Ltd",
+    "projectName": "Grand Horizon Towers Project",
+    "locationAddress": "No. 128, High Level Road, Nugegoda",
+    "refType": "PO",
+    "refNumber": "PO-2026-089",
+    "emailSubject": "Warranty request for electrical fittings Grand Horizon"
+  },
+  {
+    "date": "2026-03-10",
+    "customerName": "Eng. Chaminda Perera",
+    "companyName": "Lanka Electricity Services (Pvt) Ltd",
+    "projectName": "Southern Grid Substation Expansion",
+    "locationAddress": "No. 45, Galle Road, Colombo 03",
+    "refType": "Invoice",
+    "refNumber": "INV-2026-0452",
+    "emailSubject": "Invoice verification and warranty certificate"
+  },
+  {
+    "date": "2026-02-28",
+    "customerName": "Ms. Nilmini Silva",
+    "companyName": "Horizon Hotels & Resorts",
+    "projectName": "Bentota Beach Resort Renovation",
+    "locationAddress": "Coastal Road, Bentota",
+    "refType": "PO",
+    "refNumber": "PO/2026/HB/112",
+    "emailSubject": "Wiring devices warranty documentation"
+  }
+]

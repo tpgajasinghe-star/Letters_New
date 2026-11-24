@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileText } from 'lucide-react';
-import { WarrantyFormData, ProductItemRow } from '../types';
+import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileText, Building2, HelpCircle } from 'lucide-react';
+import { WarrantyFormData, ProductItemRow, ReferenceTypeOption, PoInvoiceTypeOption, NoteOption } from '../types';
 import { CatalogItem, CatalogMatch } from '../utils/warrantyRules';
 import { IndexedCatalogItem, getCachedCatalog, loadCatalogItems } from '../utils/catalogSearch';
+import { IndexedCustomerRecord, getCachedCustomers, loadCustomerRecords } from '../utils/customerSearch';
 import { ProductDescriptionAutocomplete } from './ProductDescriptionAutocomplete';
+import { CustomerAutocomplete } from './CustomerAutocomplete';
+import { parseCustomerAddress } from '../utils/templateParser';
 
 interface WarrantyFormProps {
   formData: WarrantyFormData;
@@ -24,18 +27,33 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
     customerAddress?: string;
     date?: string;
     items?: string;
+    referenceName?: string;
+    poNumber?: string;
+    noteContent?: string;
   }>({});
+
   const [catalog, setCatalog] = useState<IndexedCatalogItem[]>(() => getCachedCatalog());
+  const [customers, setCustomers] = useState<IndexedCustomerRecord[]>(() => getCachedCustomers());
+  const [hasManuallyEditedReference, setHasManuallyEditedReference] = useState(false);
+
   const customerAddressRef = useRef<HTMLTextAreaElement>(null);
   const firstItemInputRef = useRef<HTMLInputElement>(null);
   const itemsSectionRef = useRef<HTMLDivElement>(null);
   const dateRef = useRef<HTMLInputElement>(null);
+  const referenceNameRef = useRef<HTMLInputElement>(null);
+  const poNumberRef = useRef<HTMLInputElement>(null);
+  const noteContentRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     let active = true;
     loadCatalogItems().then((items) => {
-      if (active) {
+      if (active && items.length > 0) {
         setCatalog(items);
+      }
+    });
+    loadCustomerRecords().then((recs) => {
+      if (active) {
+        setCustomers(recs);
       }
     });
     return () => {
@@ -44,24 +62,47 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
   }, []);
 
   const isPoCertificate = formData.letterType === 'po_certificate';
+  const referenceType: ReferenceTypeOption = formData.referenceType || 'companyName';
+  const poInvoiceType: PoInvoiceTypeOption = formData.poInvoiceType || 'PO';
+  const noteOption: NoteOption = formData.noteOption || 'withoutNote';
 
-  type InvalidFieldKey = 'customerAddress' | 'items' | 'date';
+  // Smart auto-fill for reference name if typing manually
+  useEffect(() => {
+    if (hasManuallyEditedReference) return;
+    const parsed = parseCustomerAddress(formData.customerAddress);
+    let autoRef = '';
+    if (referenceType === 'projectName') {
+      autoRef = parsed.companyName || parsed.customerName || '';
+    } else if (referenceType === 'customerName') {
+      autoRef = parsed.customerName || '';
+    } else {
+      autoRef = parsed.companyName || parsed.customerName || '';
+    }
+    if (autoRef && autoRef !== formData.referenceName) {
+      onChange({ referenceName: autoRef });
+    }
+  }, [formData.customerAddress, referenceType, hasManuallyEditedReference]);
+
+  type InvalidFieldKey = 'customerAddress' | 'referenceName' | 'poNumber' | 'items' | 'noteContent' | 'date';
 
   const validate = (): InvalidFieldKey | null => {
-    const newErrors: {
-      customerAddress?: string;
-      date?: string;
-      items?: string;
-    } = {};
+    const newErrors: typeof errors = {};
 
     if (!formData.customerAddress.trim()) {
       newErrors.customerAddress = 'Customer / Company address is required.';
     }
 
+    if (!formData.referenceName?.trim()) {
+      newErrors.referenceName = 'Reference name is required for 1st paragraph.';
+    }
+
+    if (isPoCertificate && !formData.poNumber?.trim()) {
+      newErrors.poNumber = `${poInvoiceType} Number is required.`;
+    }
+
     if (!formData.items || formData.items.length === 0) {
       newErrors.items = 'Please add at least one product item.';
     } else {
-      // Validate that at least the description field is filled
       const hasValidRow = formData.items.some((item) => {
         return item.description?.trim() || item.itemCode?.trim() || item.productType?.trim();
       });
@@ -70,15 +111,21 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       }
     }
 
+    if (noteOption === 'withNote' && !formData.noteContent?.trim()) {
+      newErrors.noteContent = 'Note content is required when "With Note" is selected.';
+    }
+
     if (!formData.date.trim()) {
       newErrors.date = 'Date of issue is required.';
     }
 
     setErrors(newErrors);
 
-    // Return the first invalid field in visual top-to-bottom order
     if (newErrors.customerAddress) return 'customerAddress';
+    if (newErrors.referenceName) return 'referenceName';
+    if (isPoCertificate && newErrors.poNumber) return 'poNumber';
     if (newErrors.items) return 'items';
+    if (noteOption === 'withNote' && newErrors.noteContent) return 'noteContent';
     if (newErrors.date) return 'date';
     return null;
   };
@@ -88,14 +135,19 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       let targetEl: HTMLElement | null = null;
       if (field === 'customerAddress') {
         targetEl = customerAddressRef.current;
+      } else if (field === 'referenceName') {
+        targetEl = referenceNameRef.current;
+      } else if (field === 'poNumber') {
+        targetEl = poNumberRef.current;
       } else if (field === 'items') {
         targetEl = firstItemInputRef.current || itemsSectionRef.current;
+      } else if (field === 'noteContent') {
+        targetEl = noteContentRef.current;
       } else if (field === 'date') {
         targetEl = dateRef.current;
       }
 
       if (!targetEl) return;
-
       targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
       try {
         targetEl.focus({ preventScroll: true });
@@ -107,56 +159,106 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const firstInvalidField = validate();
-    if (!firstInvalidField) {
+    const firstInvalid = validate();
+    if (!firstInvalid) {
       onSubmit();
       return;
     }
-    scrollToAndFocusField(firstInvalidField);
+    scrollToAndFocusField(firstInvalid);
   };
 
-  // Switch Letter Type handler
+  const handleSelectCustomer = (item: IndexedCustomerRecord) => {
+    const { record } = item;
+    // 1. Populate Customer Address cleanly in order: customerName, companyName, projectName, locationAddress
+    const addrLines: string[] = [];
+    if (record.customerName) addrLines.push(record.customerName);
+    if (record.companyName && record.companyName !== record.customerName) addrLines.push(record.companyName);
+    if (record.projectName && record.projectName !== record.companyName) addrLines.push(record.projectName);
+    if (record.locationAddress) addrLines.push(record.locationAddress);
+
+    const cleanAddress = addrLines.join('\n');
+
+    // 2. Set reference type and name based on priority: projectName -> companyName -> customerName
+    let bestRefType: ReferenceTypeOption = 'companyName';
+    let bestRefName = '';
+    if (record.projectName) {
+      bestRefType = 'projectName';
+      bestRefName = record.projectName;
+    } else if (record.companyName) {
+      bestRefType = 'companyName';
+      bestRefName = record.companyName;
+    } else if (record.customerName) {
+      bestRefType = 'customerName';
+      bestRefName = record.customerName;
+    }
+
+    // 3. PO or Invoice auto-fill
+    let targetPoInvoiceType: PoInvoiceTypeOption = poInvoiceType;
+    let targetPoNumber = formData.poNumber || '';
+    if (record.refType === 'PO' || record.refType === 'Invoice') {
+      targetPoInvoiceType = record.refType;
+    }
+    if (record.refNumber) {
+      targetPoNumber = record.refNumber;
+    }
+
+    setHasManuallyEditedReference(false);
+    onChange({
+      customerAddress: cleanAddress,
+      referenceType: bestRefType,
+      referenceName: bestRefName,
+      poInvoiceType: targetPoInvoiceType,
+      poNumber: targetPoNumber,
+    });
+    setErrors((prev) => ({ ...prev, customerAddress: undefined, referenceName: undefined, poNumber: undefined }));
+  };
+
   const handleSelectLetterType = (type: 'declaration' | 'po_certificate') => {
     onChange({
       letterType: type,
-      poNumber: formData.poNumber || '',
     });
     setErrors({});
   };
 
-  // Add Item Row
-  const handleAddItem = () => {
-    const newItem: ProductItemRow = {
-      description: '',
-      productBrand: '',
-      warrantyPeriod: '',
-    };
-
-    onChange({ items: [...formData.items, newItem] });
+  const handleReferenceTypeChange = (newRefType: ReferenceTypeOption) => {
+    let nextName = formData.referenceName;
+    const parsed = parseCustomerAddress(formData.customerAddress);
+    if (!hasManuallyEditedReference || !nextName?.trim()) {
+      if (newRefType === 'projectName') {
+        nextName = parsed.companyName || parsed.customerName || '';
+      } else if (newRefType === 'customerName') {
+        nextName = parsed.customerName || '';
+      } else {
+        nextName = parsed.companyName || parsed.customerName || '';
+      }
+    }
+    onChange({
+      referenceType: newRefType,
+      referenceName: nextName,
+    });
   };
 
-  // Remove Item Row
+  const handleAddItem = () => {
+    onChange({
+      items: [...formData.items, { description: '', productBrand: '', warrantyPeriod: '' }],
+    });
+  };
+
   const handleRemoveItem = (index: number) => {
     if (formData.items.length <= 1) return;
-    const updated = formData.items.filter((_, i) => i !== index);
-    onChange({ items: updated });
+    onChange({
+      items: formData.items.filter((_, i) => i !== index),
+    });
   };
 
-  // Update specific Item field
   const handleItemChange = (index: number, field: keyof ProductItemRow, value: string) => {
-    const updated = formData.items.map((item, i) => {
-      if (i === index) {
-        return { ...item, [field]: value };
-      }
-      return item;
-    });
+    const updated = formData.items.map((item, i) => (i === index ? { ...item, [field]: value } : item));
     onChange({ items: updated });
     if (errors.items) {
       setErrors((prev) => ({ ...prev, items: undefined }));
     }
   };
 
-  // Auto-fill all three fields when a catalog suggestion is selected for a row
   const handleSelectCatalogItem = (index: number, catalogItem: CatalogItem, match: CatalogMatch) => {
     const updated = formData.items.map((item, i) => {
       if (i === index) {
@@ -181,16 +283,21 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
   };
 
   const handleFillSample = () => {
+    setHasManuallyEditedReference(false);
     if (isPoCertificate) {
       onChange({
         letterType: 'po_certificate',
         date: new Date().toISOString().split('T')[0],
+        customerAddress: `Mr. Kasun Rajapaksha\nApex Construction & Engineering (Pvt) Ltd\nGrand Horizon Towers Project\nNo. 128, High Level Road, Nugegoda`,
+        referenceType: 'projectName',
+        referenceName: 'Grand Horizon Towers Project',
+        poInvoiceType: 'PO',
         poNumber: 'PO-2026-089',
-        customerAddress: `The General Manager\nPower & Energy Projects Division\nLanka Electricity Services (Pvt) Ltd\nNo. 45, Galle Road, Colombo 03`,
+        noteOption: 'withNote',
+        noteContent: 'All electrical accessories must be installed by certified Kevilton electricians.',
         items: [
           { description: 'KEV-DB-08 - Distribution Boards & Enclosures 8-Way', productBrand: 'Circuit Protection Devices', warrantyPeriod: '10 Years' },
           { description: 'KEV-MOD-01 - Modular Switches and Socket Outlets', productBrand: 'Wiring Devices', warrantyPeriod: '5 Years' },
-          { description: 'KEV-MCB-6K - Miniature Circuit Breakers (MCB) 6kA', productBrand: 'Circuit Protection Devices', warrantyPeriod: '2 Years' },
         ],
         wordingOverrides: undefined,
       });
@@ -198,11 +305,14 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       onChange({
         letterType: 'declaration',
         date: new Date().toISOString().split('T')[0],
-        customerAddress: `Mr. Kasun Rajapaksha\nSenior Electrical Consultant\nApex Construction & Engineering (Pvt) Ltd\nNo. 128, High Level Road, Nugegoda`,
+        customerAddress: `Mr. Kasun Rajapaksha\nApex Construction & Engineering (Pvt) Ltd\nNo. 128, High Level Road, Nugegoda`,
+        referenceType: 'companyName',
+        referenceName: 'Apex Construction & Engineering (Pvt) Ltd',
+        noteOption: 'withoutNote',
+        noteContent: '',
         items: [
           { description: 'KEV-SW-101 - 1 Gang 1 Way Switch 10A White', productBrand: 'Wiring Devices', warrantyPeriod: '5 Years' },
           { description: 'KEV-SK-202 - 13A Switched Socket Outlet Single', productBrand: 'Wiring Devices', warrantyPeriod: '2 Years' },
-          { description: 'KEV-MCB-32 - Single Pole MCB 32A 6kA Curve C', productBrand: 'Circuit Protection Devices', warrantyPeriod: '2 Years' },
         ],
         wordingOverrides: undefined,
       });
@@ -211,14 +321,26 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
   };
 
   const handleReset = () => {
+    setHasManuallyEditedReference(false);
     onChange({
       customerAddress: '',
       date: new Date().toISOString().split('T')[0],
+      referenceType: 'companyName',
+      referenceName: '',
+      poInvoiceType: 'PO',
       poNumber: '',
+      noteOption: 'withoutNote',
+      noteContent: '',
       items: [{ description: '', productBrand: '', warrantyPeriod: '' }],
       wordingOverrides: undefined,
     });
     setErrors({});
+  };
+
+  const getRefPlaceholder = () => {
+    if (referenceType === 'projectName') return 'e.g. Grand Horizon Towers Project';
+    if (referenceType === 'customerName') return 'e.g. Mr. Kasun Rajapaksha';
+    return 'e.g. Apex Construction & Engineering (Pvt) Ltd';
   };
 
   return (
@@ -226,20 +348,10 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       {/* 3-Step Process Indicator */}
       <div className="flex items-center justify-between border-b border-slate-100 pb-6 mb-7">
         <div className="flex items-center gap-2.5">
-          <div
-            className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${
-              step >= 1
-                ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
-                : 'bg-slate-200 text-slate-600'
-            }`}
-          >
+          <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${step >= 1 ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30' : 'bg-slate-200 text-slate-650'}`}>
             1
           </div>
-          <span
-            className={`text-xs sm:text-sm font-semibold ${
-              step === 1 ? 'text-blue-600' : 'text-slate-700'
-            }`}
-          >
+          <span className={`text-xs sm:text-sm font-semibold ${step === 1 ? 'text-blue-600' : 'text-slate-700'}`}>
             Enter Details
           </span>
         </div>
@@ -247,20 +359,10 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
         <div className="h-0.5 w-6 sm:w-12 bg-slate-200" />
 
         <div className="flex items-center gap-2.5">
-          <div
-            className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${
-              step >= 2
-                ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30'
-                : 'bg-slate-200 text-slate-500'
-            }`}
-          >
+          <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${step >= 2 ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/30' : 'bg-slate-200 text-slate-500'}`}>
             2
           </div>
-          <span
-            className={`text-xs sm:text-sm font-medium ${
-              step === 2 ? 'text-blue-600 font-semibold' : 'text-slate-400'
-            }`}
-          >
+          <span className={`text-xs sm:text-sm font-medium ${step === 2 ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>
             Live Preview
           </span>
         </div>
@@ -268,20 +370,10 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
         <div className="h-0.5 w-6 sm:w-12 bg-slate-200" />
 
         <div className="flex items-center gap-2.5">
-          <div
-            className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${
-              step >= 3
-                ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-500/30'
-                : 'bg-slate-200 text-slate-500'
-            }`}
-          >
+          <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${step >= 3 ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-500/30' : 'bg-slate-200 text-slate-500'}`}>
             3
           </div>
-          <span
-            className={`text-xs sm:text-sm font-medium ${
-              step === 3 ? 'text-emerald-600 font-semibold' : 'text-slate-400'
-            }`}
-          >
+          <span className={`text-xs sm:text-sm font-medium ${step === 3 ? 'text-emerald-600 font-semibold' : 'text-slate-400'}`}>
             Download PDF
           </span>
         </div>
@@ -312,7 +404,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
       <form onSubmit={handleSubmit} noValidate className="space-y-6">
         {/* ============================================================ */}
-        {/* STEP 1: CHOOSE LETTER TYPE FIRST (Front page selection)       */}
+        {/* STEP 1: CHOOSE LETTER TYPE FIRST                             */}
         {/* ============================================================ */}
         <div className="bg-slate-50/80 p-5 rounded-2xl border border-slate-200/80">
           <label className="block text-sm font-bold text-slate-900 mb-2">
@@ -323,7 +415,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-            {/* Option 1: Common Draft Warranty Certificate */}
+            {/* Option 1: Draft Warranty Certificate */}
             <label
               onClick={() => handleSelectLetterType('declaration')}
               className={`flex items-start gap-3.5 p-4 rounded-xl border-2 cursor-pointer transition-all duration-150 select-none ${
@@ -342,10 +434,10 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
               />
               <div>
                 <span className="font-bold text-slate-900 text-sm block">
-                  1. Common Draft Warranty Certificate
+                  1. Draft Warranty Certificate
                 </span>
                 <span className="text-xs text-slate-500 mt-0.5 block">
-                  Declaration letter with: <strong>1. Product Description</strong>, <strong>2. Product Brand</strong>, <strong>3. Warranty Period</strong>
+                  Declaration letter with: <strong>Product Description</strong>, <strong>Product Brand</strong>, <strong>Warranty Period</strong>
                 </span>
               </div>
             </label>
@@ -372,7 +464,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                   2. Common Warranty Certificate
                 </span>
                 <span className="text-xs text-slate-500 mt-0.5 block">
-                  Certificate asking: <strong>PO Number</strong>, <strong>1. Product Description</strong>, <strong>2. Product Brand</strong>, <strong>3. Warranty Period</strong>
+                  Certificate asking: <strong>PO / Invoice No.</strong>, <strong>Product Description</strong>, <strong>Brand</strong>, <strong>Period</strong>
                 </span>
               </div>
             </label>
@@ -380,7 +472,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
         </div>
 
         {/* ============================================================ */}
-        {/* STEP 2: CUSTOMER ADDRESS                                     */}
+        {/* STEP 2: CUSTOMER ADDRESS WITH AUTO-SUGGEST                    */}
         {/* ============================================================ */}
         <div>
           <div className="flex items-center gap-3 mb-2">
@@ -392,31 +484,25 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                 Customer Address <span className="text-red-500">*</span>
               </label>
               <p className="text-xs text-slate-500">
-                Recipient name, company &amp; address (one per line)
+                Type 2+ characters to search customer database or enter manually (one per line)
               </p>
             </div>
           </div>
 
-          <div className="relative">
-            <textarea
-              ref={customerAddressRef}
-              id="customerAddress"
-              rows={3}
-              value={formData.customerAddress}
-              onChange={(e) => {
-                onChange({ customerAddress: e.target.value });
-                if (errors.customerAddress) {
-                  setErrors((prev) => ({ ...prev, customerAddress: undefined }));
-                }
-              }}
-              placeholder="e.g.&#10;Mr. Kasun Rajapaksha&#10;Apex Construction & Engineering (Pvt) Ltd&#10;No. 128, High Level Road, Nugegoda"
-              className={`w-full px-4 py-3 text-sm text-slate-800 bg-slate-50/50 border rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all placeholder:text-slate-400 resize-y min-h-[95px] ${
-                errors.customerAddress
-                  ? 'border-red-400 bg-red-50/20 focus:border-red-500'
-                  : 'border-slate-200 focus:border-blue-500 hover:border-slate-300'
-              }`}
-            />
-          </div>
+          <CustomerAutocomplete
+            inputRef={customerAddressRef}
+            value={formData.customerAddress}
+            customers={customers}
+            onChange={(val) => {
+              onChange({ customerAddress: val });
+              if (errors.customerAddress) {
+                setErrors((prev) => ({ ...prev, customerAddress: undefined }));
+              }
+            }}
+            onSelect={handleSelectCustomer}
+            placeholder={'e.g.\nMr. Kasun Rajapaksha\nApex Construction & Engineering (Pvt) Ltd\nNo. 128, High Level Road, Nugegoda'}
+            error={errors.customerAddress}
+          />
           {errors.customerAddress && (
             <p className="flex items-center gap-1.5 text-xs text-red-600 font-medium mt-1.5">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -425,40 +511,199 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
           )}
         </div>
 
-        {/* PO Number Field (For Common Warranty Certificate) */}
-        {isPoCertificate && (
+        {/* ============================================================ */}
+        {/* STEP 3: 1ST PARAGRAPH REFERENCE SELECTION                      */}
+        {/* ============================================================ */}
+        <div className="bg-slate-50/60 p-5 rounded-2xl border border-slate-200/80 space-y-4">
           <div>
-            <div className="flex items-center gap-3 mb-2">
+            <label className="block text-sm font-bold text-slate-900 mb-1">
+              1st Paragraph Reference <span className="text-red-500">*</span>
+            </label>
+            <p className="text-xs text-slate-500">
+              Choose which entity name to reference in the opening paragraph of the letter:
+            </p>
+          </div>
+
+          {/* Three Radio Buttons */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <label
+              onClick={() => handleReferenceTypeChange('projectName')}
+              className={`flex items-center gap-2.5 p-3 rounded-xl border-2 cursor-pointer transition-all select-none ${
+                referenceType === 'projectName'
+                  ? 'border-blue-600 bg-blue-50/60 shadow-xs'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}
+            >
+              <input
+                type="radio"
+                name="refTypeRadio"
+                value="projectName"
+                checked={referenceType === 'projectName'}
+                onChange={() => handleReferenceTypeChange('projectName')}
+                className="h-4 w-4 text-blue-600 border-slate-300 focus:ring-blue-500"
+              />
+              <span className="font-bold text-xs text-slate-900">Project Name</span>
+            </label>
+
+            <label
+              onClick={() => handleReferenceTypeChange('companyName')}
+              className={`flex items-center gap-2.5 p-3 rounded-xl border-2 cursor-pointer transition-all select-none ${
+                referenceType === 'companyName'
+                  ? 'border-blue-600 bg-blue-50/60 shadow-xs'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}
+            >
+              <input
+                type="radio"
+                name="refTypeRadio"
+                value="companyName"
+                checked={referenceType === 'companyName'}
+                onChange={() => handleReferenceTypeChange('companyName')}
+                className="h-4 w-4 text-blue-600 border-slate-300 focus:ring-blue-500"
+              />
+              <span className="font-bold text-xs text-slate-900">Company Name</span>
+            </label>
+
+            <label
+              onClick={() => handleReferenceTypeChange('customerName')}
+              className={`flex items-center gap-2.5 p-3 rounded-xl border-2 cursor-pointer transition-all select-none ${
+                referenceType === 'customerName'
+                  ? 'border-blue-600 bg-blue-50/60 shadow-xs'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}
+            >
+              <input
+                type="radio"
+                name="refTypeRadio"
+                value="customerName"
+                checked={referenceType === 'customerName'}
+                onChange={() => handleReferenceTypeChange('customerName')}
+                className="h-4 w-4 text-blue-600 border-slate-300 focus:ring-blue-500"
+              />
+              <span className="font-bold text-xs text-slate-900">Customer Name</span>
+            </label>
+          </div>
+
+          {/* Editable text input for reference name */}
+          <div>
+            <div className="relative">
+              <input
+                ref={referenceNameRef}
+                type="text"
+                value={formData.referenceName || ''}
+                onChange={(e) => {
+                  setHasManuallyEditedReference(true);
+                  onChange({ referenceName: e.target.value });
+                  if (errors.referenceName) {
+                    setErrors((prev) => ({ ...prev, referenceName: undefined }));
+                  }
+                }}
+                placeholder={getRefPlaceholder()}
+                className={`w-full px-4 py-2.5 text-xs font-semibold text-slate-800 bg-white border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all ${
+                  errors.referenceName ? 'border-red-400 focus:border-red-500' : 'border-slate-200 focus:border-blue-500 hover:border-slate-300'
+                }`}
+              />
+            </div>
+            {errors.referenceName && (
+              <p className="flex items-center gap-1.5 text-xs text-red-600 font-medium mt-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                {errors.referenceName}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* ============================================================ */}
+        {/* STEP 4: 2ND PARAGRAPH REFERENCE (PO OR INVOICE)              */}
+        {/* ============================================================ */}
+        {isPoCertificate && (
+          <div className="bg-slate-50/60 p-5 rounded-2xl border border-slate-200/80 space-y-4">
+            <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
                 <FileText className="w-5 h-5 stroke-[2.2]" />
               </div>
               <div>
-                <label htmlFor="poNumber" className="block text-sm font-bold text-slate-800">
-                  PO Number
+                <label className="block text-sm font-bold text-slate-900">
+                  Reference Document Type &amp; Number <span className="text-red-500">*</span>
                 </label>
                 <p className="text-xs text-slate-500">
-                  Purchase Order number (added to the end of the subject title)
+                  Select whether this certificate is against a PO or an Invoice
                 </p>
               </div>
             </div>
 
-            <div className="relative">
-              <input
-                type="text"
-                id="poNumber"
-                value={formData.poNumber || ''}
-                onChange={(e) => onChange({ poNumber: e.target.value })}
-                placeholder="e.g. PO-2026-089 or 2026/KEV/PO/441"
-                className="w-full px-4 py-3 text-sm text-slate-800 bg-slate-50/50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 hover:border-slate-300 transition-all font-medium placeholder:text-slate-400"
-              />
+            {/* PO Number vs Invoice Number toggle buttons */}
+            <div className="grid grid-cols-2 gap-3">
+              <label
+                onClick={() => onChange({ poInvoiceType: 'PO' })}
+                className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition-all select-none ${
+                  poInvoiceType === 'PO'
+                    ? 'border-blue-600 bg-blue-50/60 shadow-xs'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="poInvoiceRadio"
+                  value="PO"
+                  checked={poInvoiceType === 'PO'}
+                  onChange={() => onChange({ poInvoiceType: 'PO' })}
+                  className="h-4 w-4 text-blue-600 border-slate-300 focus:ring-blue-500"
+                />
+                <span className="font-bold text-xs text-slate-900">PO Number</span>
+              </label>
+
+              <label
+                onClick={() => onChange({ poInvoiceType: 'Invoice' })}
+                className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition-all select-none ${
+                  poInvoiceType === 'Invoice'
+                    ? 'border-blue-600 bg-blue-50/60 shadow-xs'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="poInvoiceRadio"
+                  value="Invoice"
+                  checked={poInvoiceType === 'Invoice'}
+                  onChange={() => onChange({ poInvoiceType: 'Invoice' })}
+                  className="h-4 w-4 text-blue-600 border-slate-300 focus:ring-blue-500"
+                />
+                <span className="font-bold text-xs text-slate-900">Invoice Number</span>
+              </label>
+            </div>
+
+            {/* Input field for PO or Invoice number */}
+            <div>
+              <div className="relative">
+                <input
+                  ref={poNumberRef}
+                  type="text"
+                  value={formData.poNumber || ''}
+                  onChange={(e) => {
+                    onChange({ poNumber: e.target.value });
+                    if (errors.poNumber) {
+                      setErrors((prev) => ({ ...prev, poNumber: undefined }));
+                    }
+                  }}
+                  placeholder={poInvoiceType === 'Invoice' ? 'e.g. INV-2026-0452' : 'e.g. PO-2026-089'}
+                  className={`w-full px-4 py-3 text-sm text-slate-800 bg-white border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium transition-all ${
+                    errors.poNumber ? 'border-red-400 focus:border-red-500' : 'border-slate-200 focus:border-blue-500 hover:border-slate-300'
+                  }`}
+                />
+              </div>
+              {errors.poNumber && (
+                <p className="flex items-center gap-1.5 text-xs text-red-600 font-medium mt-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  {errors.poNumber}
+                </p>
+              )}
             </div>
           </div>
         )}
 
         {/* ============================================================ */}
-        {/* STEP 3: DYNAMIC PRODUCT DETAILS ACCORDING TO LETTER TYPE      */}
-        {/* If Common Draft: 1. Item Code, 2. Description, 3. Period     */}
-        {/* If Common Warranty: 1. Product type, 2. Product Brand, 3. Period */}
+        {/* STEP 5: PRODUCT ITEMS TABLE                                  */}
         {/* ============================================================ */}
         <div ref={itemsSectionRef}>
           <div className="flex items-center justify-between mb-3">
@@ -483,14 +728,12 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
             </button>
           </div>
 
-          {/* Items Row List */}
           <div className="space-y-3">
             {formData.items.map((item, index) => (
               <div
                 key={index}
                 className="p-4 bg-slate-50/70 border border-slate-200 rounded-xl flex flex-col gap-3 transition-all hover:border-slate-300"
               >
-                {/* Top Section: Item Index + Full Width Product Description */}
                 <div className="flex items-start gap-3">
                   <div className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-500 flex items-center justify-center shrink-0 mt-5 shadow-xs">
                     #{index + 1}
@@ -522,9 +765,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                   )}
                 </div>
 
-                {/* Bottom Segment: Product Brand + Warranty Period */}
                 <div className="pl-10 grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200/60">
-                  {/* Product Brand */}
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">
                       Product Brand <span className="text-red-500">*</span>
@@ -538,7 +779,6 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                     />
                   </div>
 
-                  {/* Warranty Period */}
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">
                       Warranty Period <span className="text-red-500">*</span>
@@ -565,7 +805,91 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
         </div>
 
         {/* ============================================================ */}
-        {/* STEP 4: DATE                                                 */}
+        {/* STEP 6: TABLE FOOTER NOTE OPTION                             */}
+        {/* ============================================================ */}
+        <div className="bg-slate-50/60 p-5 rounded-2xl border border-slate-200/80 space-y-4">
+          <div>
+            <label className="block text-sm font-bold text-slate-900 mb-1">
+              Additional Note Below Table
+            </label>
+            <p className="text-xs text-slate-500">
+              Choose whether to include a custom note directly underneath the product items table:
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label
+              onClick={() => onChange({ noteOption: 'withoutNote' })}
+              className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition-all select-none ${
+                noteOption === 'withoutNote'
+                  ? 'border-blue-600 bg-blue-50/60 shadow-xs'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}
+            >
+              <input
+                type="radio"
+                name="noteRadio"
+                value="withoutNote"
+                checked={noteOption === 'withoutNote'}
+                onChange={() => onChange({ noteOption: 'withoutNote' })}
+                className="h-4 w-4 text-blue-600 border-slate-300 focus:ring-blue-500"
+              />
+              <span className="font-bold text-xs text-slate-900">Without Note</span>
+            </label>
+
+            <label
+              onClick={() => onChange({ noteOption: 'withNote' })}
+              className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition-all select-none ${
+                noteOption === 'withNote'
+                  ? 'border-blue-600 bg-blue-50/60 shadow-xs'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}
+            >
+              <input
+                type="radio"
+                name="noteRadio"
+                value="withNote"
+                checked={noteOption === 'withNote'}
+                onChange={() => onChange({ noteOption: 'withNote' })}
+                className="h-4 w-4 text-blue-600 border-slate-300 focus:ring-blue-500"
+              />
+              <span className="font-bold text-xs text-slate-900">With Note</span>
+            </label>
+          </div>
+
+          {noteOption === 'withNote' && (
+            <div className="space-y-1.5 animate-fadeIn pt-1">
+              <label htmlFor="noteContent" className="block text-xs font-bold text-slate-700">
+                Note Content <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                ref={noteContentRef}
+                id="noteContent"
+                rows={2}
+                value={formData.noteContent || ''}
+                onChange={(e) => {
+                  onChange({ noteContent: e.target.value });
+                  if (errors.noteContent) {
+                    setErrors((prev) => ({ ...prev, noteContent: undefined }));
+                  }
+                }}
+                placeholder="e.g. All electrical accessories must be installed by certified Kevilton electricians."
+                className={`w-full px-4 py-2.5 text-xs text-slate-800 bg-white border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all ${
+                  errors.noteContent ? 'border-red-400 focus:border-red-500' : 'border-slate-200 focus:border-blue-500 hover:border-slate-300'
+                }`}
+              />
+              {errors.noteContent && (
+                <p className="flex items-center gap-1.5 text-xs text-red-600 font-medium mt-1">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  {errors.noteContent}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ============================================================ */}
+        {/* STEP 7: DATE                                                 */}
         {/* ============================================================ */}
         <div>
           <div className="flex items-center gap-3 mb-2">
@@ -607,7 +931,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
           )}
         </div>
 
-        {/* Submit Button to go directly to Live Preview & Download */}
+        {/* Submit Button */}
         <div className="pt-3">
           <button
             type="submit"
@@ -620,25 +944,9 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
           >
             {isGenerating ? (
               <>
-                <svg
-                  className="animate-spin -ml-1 mr-2 h-5 w-5 text-white"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  />
+                <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
                 <span>Processing...</span>
               </>

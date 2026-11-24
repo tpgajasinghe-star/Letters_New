@@ -138,7 +138,10 @@ export function resolveLetterContent(
   const dateText = overrides?.dateDisplay !== undefined ? overrides.dateDisplay : defaultFormattedDate;
 
   const companyName = parsedAddr.companyName || '[Company Name]';
-  const poNumberText = formData.poNumber?.trim() || '[PO Number]';
+  const refType = formData.refInvoiceType === 'Invoice' ? 'Invoice' : 'PO';
+  const refNumberText = formData.poNumber?.trim() || `[${formData.poInvoiceType === 'Invoice' ? 'Invoice' : 'PO'} Number]`;
+  const referenceName = formData.referenceName?.trim() || companyName;
+  const referenceType = formData.referenceType || 'companyName';
 
   if (isPoCertificate) {
     const defaultBodyParagraphs = [
@@ -147,29 +150,47 @@ export function resolveLetterContent(
       'Should you require any further information regarding this warranty, please do not hesitate to contact us.',
     ];
 
-    const bodyParagraphs = defaultBodyParagraphs.map((def, idx) =>
+    let bodyParagraphs = defaultBodyParagraphs.map((def, idx) =>
       overrides?.bodyParagraphs?.[idx] !== undefined ? overrides.bodyParagraphs[idx] : def
     );
+
+    // If noteOption is 'withNote' and noteContent is provided, insert as first paragraph or prepend note
+    const noteText = formData.noteContent?.trim();
+    if (formData.noteOption === 'withNote' && noteText) {
+      const formattedNote = noteText.toLowerCase().startsWith('note:') ? noteText : `Note: ${noteText}`;
+      bodyParagraphs = [formattedNote, ...bodyParagraphs];
+    } else if (formData.noteOption === 'withoutNote') {
+      // Remove any leading Note paragraph if withoutNote is selected
+      bodyParagraphs = bodyParagraphs.filter((p) => !p.trim().toLowerCase().startsWith('note:'));
+    }
+
+    // 1st paragraph rules for Template 2
+    let defaultIntro1 = '';
+    if (referenceType === 'projectName') {
+      defaultIntro1 = `We, ${KEVILTON_COMPANY_NAME}, sincerely appreciate the trust placed in our products for the ${referenceName}. We are committed to providing high-quality products that comply with national and international standards.`;
+    } else {
+      defaultIntro1 = `We, ${KEVILTON_COMPANY_NAME}, sincerely appreciate the trust placed in our products by ${referenceName}. We are committed to providing high-quality products that comply with national and international standards.`;
+    }
+
+    // 2nd paragraph rules for Template 2 (PO vs Invoice)
+    const docLabel = formData.poInvoiceType === 'Invoice' ? 'Invoice No.' : 'Purchase Order No.';
+    const defaultIntro2 = `We hereby confirm that the following products supplied against ${docLabel} ${refNumberText} are covered under the Kevilton warranty program.`;
 
     return {
       isPoCertificate: true,
       dateText,
       addressLines: parsedAddr.formattedLines,
       companyName,
-      poNumberText,
+      poNumberText: refNumberText,
       salutation: overrides?.salutation !== undefined ? overrides.salutation : 'Dear Sir/Madam,',
       subject:
         overrides?.subject !== undefined
           ? overrides.subject
-          : getCommonWarrantySubject(formData.poNumber),
+          : getCommonWarrantySubject(formData.poNumber, formData.poInvoiceType),
       introParagraph1:
-        overrides?.introParagraph1 !== undefined
-          ? overrides.introParagraph1
-          : `We, ${KEVILTON_COMPANY_NAME}, sincerely appreciate the trust you have placed in our products. We are committed to providing high-quality products that comply with national and international standards.`,
+        overrides?.introParagraph1 !== undefined ? overrides.introParagraph1 : defaultIntro1,
       introParagraph2:
-        overrides?.introParagraph2 !== undefined
-          ? overrides.introParagraph2
-          : `We hereby confirm that the following products supplied against Purchase Order No. ${poNumberText} are covered under the Kevilton warranty program.`,
+        overrides?.introParagraph2 !== undefined ? overrides.introParagraph2 : defaultIntro2,
       itemsHeader:
         overrides?.itemsHeader !== undefined
           ? overrides.itemsHeader
@@ -190,7 +211,7 @@ export function resolveLetterContent(
     };
   }
 
-  // Template 1: Common Draft Warranty Certificate (Declaration)
+  // Template 1: Draft Warranty Certificate (Declaration)
   const defaultBodyParagraphs = [
     'The above warranty covers manufacturing defects arising under normal installation and operating conditions from the date of delivery.',
     `During the warranty period, ${KEVILTON_COMPANY_NAME} will, at its discretion, repair or replace any product found to be defective due to manufacturing faults.`,
@@ -199,25 +220,39 @@ export function resolveLetterContent(
     'Should you require any further information regarding this warranty, please do not hesitate to contact us.',
   ];
 
-  const bodyParagraphs = defaultBodyParagraphs.map((def, idx) =>
+  let bodyParagraphs = defaultBodyParagraphs.map((def, idx) =>
     overrides?.bodyParagraphs?.[idx] !== undefined ? overrides.bodyParagraphs[idx] : def
   );
+
+  const noteText = formData.noteContent?.trim();
+  if (formData.noteOption === 'withNote' && noteText) {
+    const formattedNote = noteText.toLowerCase().startsWith('note:') ? noteText : `Note: ${noteText}`;
+    bodyParagraphs = [formattedNote, ...bodyParagraphs];
+  } else if (formData.noteOption === 'withoutNote') {
+    bodyParagraphs = bodyParagraphs.filter((p) => !p.trim().toLowerCase().startsWith('note:'));
+  }
+
+  // 1st paragraph rules for Template 1
+  let defaultIntro1 = '';
+  if (referenceType === 'projectName') {
+    defaultIntro1 = `With reference to the products to be supplied for the ${referenceName}, we hereby confirm that ${KEVILTON_COMPANY_NAME} provides the following warranty for the products detailed below:`;
+  } else {
+    defaultIntro1 = `With reference to the products to be supplied to ${referenceName}, we hereby confirm that ${KEVILTON_COMPANY_NAME} provides the following warranty for the products detailed below:`;
+  }
 
   return {
     isPoCertificate: false,
     dateText,
     addressLines: parsedAddr.formattedLines,
     companyName,
-    poNumberText,
+    poNumberText: refNumberText,
     salutation: overrides?.salutation !== undefined ? overrides.salutation : 'Dear Sir/Madam,',
     subject:
       overrides?.subject !== undefined
         ? overrides.subject
         : `Warranty Declaration for ${brandSubject}`,
     introParagraph1:
-      overrides?.introParagraph1 !== undefined
-        ? overrides.introParagraph1
-        : `With reference to the product supplied to ${companyName}, we hereby confirm that ${KEVILTON_COMPANY_NAME} provides the following warranty for the product detailed below:`,
+      overrides?.introParagraph1 !== undefined ? overrides.introParagraph1 : defaultIntro1,
     introParagraph2: '',
     itemsHeader: '',
     bodyParagraphs,
