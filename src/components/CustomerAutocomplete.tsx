@@ -30,13 +30,19 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
+  // Filter and rank without any deduplication, grouping, or collapsing
   const suggestions = useMemo(() => {
     return filterAndRankCustomers(customers, value);
   }, [value, customers]);
 
+  // Limit rendering to 50 items for optimal performance while preserving all matches
+  const displayedSuggestions = useMemo(() => {
+    return suggestions.slice(0, 50);
+  }, [suggestions]);
+
   useEffect(() => {
     setHighlightedIndex(0);
-  }, [suggestions]);
+  }, [displayedSuggestions]);
 
   useEffect(() => {
     if (!isOpen || !listRef.current) return;
@@ -84,7 +90,7 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
       }
       return;
     }
-    if (suggestions.length === 0) return;
+    if (displayedSuggestions.length === 0) return;
 
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -92,26 +98,26 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
         setIsOpen(true);
         setHighlightedIndex(0);
       } else {
-        setHighlightedIndex((prev) => (prev + 1) % suggestions.length);
+        setHighlightedIndex((prev) => (prev + 1) % displayedSuggestions.length);
       }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (!isOpen) {
         setIsOpen(true);
-        setHighlightedIndex(suggestions.length - 1);
+        setHighlightedIndex(displayedSuggestions.length - 1);
       } else {
-        setHighlightedIndex((prev) => (prev - 1 + suggestions.length) % suggestions.length);
+        setHighlightedIndex((prev) => (prev - 1 + displayedSuggestions.length) % displayedSuggestions.length);
       }
     } else if (e.key === 'Enter' && isOpen) {
       e.preventDefault();
-      const chosen = suggestions[highlightedIndex];
+      const chosen = displayedSuggestions[highlightedIndex];
       if (chosen) {
         handleSelect(chosen);
       }
     }
   };
 
-  const showDropdown = isOpen && suggestions.length > 0;
+  const showDropdown = isOpen && displayedSuggestions.length > 0;
 
   return (
     <div ref={containerRef} className="relative">
@@ -137,13 +143,22 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
         <div className="absolute left-0 right-0 top-full mt-1.5 z-40 bg-white border border-slate-200 rounded-xl shadow-xl shadow-slate-900/10 overflow-hidden">
           <div className="sticky top-0 z-10 px-3.5 py-1.5 bg-slate-50 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 flex items-center justify-between">
             <span>
-              {suggestions.length} {suggestions.length === 1 ? 'matching customer' : 'matching customers'}
+              {suggestions.length === 1
+                ? '1 matching customer'
+                : suggestions.length > 50
+                ? `Showing 50 of ${suggestions.length} matching customers`
+                : `${suggestions.length} matching customers`}
             </span>
           </div>
+
           <ul ref={listRef} role="listbox" className="max-h-72 overflow-y-auto py-1 divide-y divide-slate-100">
-            {suggestions.map((entry, idx) => {
+            {displayedSuggestions.map((entry, idx) => {
               const isHighlighted = idx === highlightedIndex;
               const { record } = entry;
+
+              // Unique React key combining SNo, row index, and address
+              const itemKey = `${entry.sno || 'row'}-${idx}-${record.locationAddress || ''}`;
+
               let refBadge = '';
               if (record.refNumber?.trim()) {
                 const trimmedNum = record.refNumber.trim();
@@ -154,9 +169,21 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
                 }
               }
 
+              // Line 2 secondary details: Project and/or Customer name if available and not shown as Primary Name
+              const secondaryDetails: { label: string; text: string }[] = [];
+              if (record.projectName?.trim() && record.projectName.trim() !== entry.primaryName) {
+                secondaryDetails.push({ label: 'Project', text: record.projectName.trim() });
+              }
+              if (record.customerName?.trim() && record.customerName.trim() !== entry.primaryName) {
+                secondaryDetails.push({ label: 'Contact', text: record.customerName.trim() });
+              }
+              if (record.companyName?.trim() && record.companyName.trim() !== entry.primaryName) {
+                secondaryDetails.push({ label: 'Company', text: record.companyName.trim() });
+              }
+
               return (
                 <li
-                  key={idx}
+                  key={itemKey}
                   role="option"
                   aria-selected={isHighlighted}
                   onMouseEnter={() => setHighlightedIndex(idx)}
@@ -168,6 +195,7 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
                     isHighlighted ? 'bg-blue-50 text-blue-900' : 'text-slate-800 hover:bg-slate-50'
                   }`}
                 >
+                  {/* Line 1: #SNo badge + Primary Name + Ref Badge + Date */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 min-w-0">
                       {record.sno && (
@@ -188,9 +216,31 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
                       )}
                     </div>
                   </div>
-                  <div className={`text-[11px] mt-0.5 truncate ${isHighlighted ? 'text-blue-700/80' : 'text-slate-500'}`}>
-                    {record.locationAddress}
-                  </div>
+
+                  {/* Line 2 (when available and not already shown as Primary Name): subtle inline labels */}
+                  {secondaryDetails.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] mt-0.5">
+                      {secondaryDetails.map((detail, dIdx) => (
+                        <span key={dIdx} className="truncate">
+                          <span className="font-semibold text-slate-500">{detail.label}: </span>
+                          <span className={isHighlighted ? 'text-blue-800 font-medium' : 'text-slate-700'}>
+                            {detail.text}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Line 3: locationAddress */}
+                  {record.locationAddress && (
+                    <div
+                      className={`text-[11px] mt-0.5 truncate ${
+                        isHighlighted ? 'text-blue-700/90' : 'text-slate-500'
+                      }`}
+                    >
+                      {record.locationAddress}
+                    </div>
+                  )}
                 </li>
               );
             })}

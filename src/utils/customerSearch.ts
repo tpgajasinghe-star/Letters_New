@@ -29,6 +29,8 @@ export interface IndexedCustomerRecord {
   emailSubjectLower: string;
   primaryName: string;
   combinedSearchText: string;
+  fieldValuesLower: string[];
+  wordsLower: string[];
 }
 
 let cachedCustomers: IndexedCustomerRecord[] | null = null;
@@ -40,19 +42,11 @@ export function getCachedCustomers(): IndexedCustomerRecord[] {
 
 /**
  * Trigger condition:
- * - If the typed query is numeric (e.g. 1, 5, 12) or starts with # followed by digits (e.g. #5, #12),
- *   trigger suggestions starting from 1 character.
- * - Otherwise, trigger at 2+ characters as before.
+ * Show the suggestion dropdown immediately starting from 1 character across all columns
+ * (e.g. 's', 'c', '1', '#1', etc.).
  */
 export function shouldTriggerCustomerSearch(rawQuery: string): boolean {
-  const query = rawQuery.trim();
-  if (!query) return false;
-
-  const isNumericOrHashNumber = /^\d+$/.test(query) || /^#\d+$/.test(query);
-  if (isNumericOrHashNumber) {
-    return query.length >= 1;
-  }
-  return query.length >= 2;
+  return rawQuery.trim().length >= 1;
 }
 
 export function loadCustomerRecords(): Promise<IndexedCustomerRecord[]> {
@@ -132,8 +126,8 @@ export function loadCustomerRecords(): Promise<IndexedCustomerRecord[]> {
           const snoNormalized = sno.replace(/^#/, '').trim().toLowerCase();
           const primaryName = companyName || projectName || customerName || locationAddress || (sno ? `Customer #${sno}` : 'Customer');
 
-          // Combined search text across every column/field
-          const combinedSearchText = [
+          // Collect all lowercase field values for starts-with matching
+          const fieldValuesLower = [
             sno,
             sno ? `#${sno}` : '',
             customerName,
@@ -148,8 +142,19 @@ export function loadCustomerRecords(): Promise<IndexedCustomerRecord[]> {
             extraSearch,
           ]
             .filter(Boolean)
-            .join(' ')
-            .toLowerCase();
+            .map((val) => val.toLowerCase());
+
+          // Extract all unique words across fields for 1-char word-boundary starts-with matching
+          const wordsSet = new Set<string>();
+          for (const fv of fieldValuesLower) {
+            const words = fv.split(/[\s,./#\-()_]+/).filter(Boolean);
+            for (const w of words) {
+              wordsSet.add(w);
+            }
+          }
+          const wordsLower = Array.from(wordsSet);
+
+          const combinedSearchText = fieldValuesLower.join(' ');
 
           indexed.push({
             record: {
@@ -180,6 +185,8 @@ export function loadCustomerRecords(): Promise<IndexedCustomerRecord[]> {
             emailSubjectLower: emailSubject.toLowerCase(),
             primaryName,
             combinedSearchText,
+            fieldValuesLower,
+            wordsLower,
           });
         }
 
@@ -206,76 +213,116 @@ export function filterAndRankCustomers(
   }
 
   const queryLower = query.toLowerCase();
-  const tokens = queryLower.split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return [];
+  const isOneChar = queryLower.length === 1;
 
-  // Strip leading '#' for SNo matching (e.g. "#5" -> "5")
+  // Clean query without leading '#' for SNo checks (e.g. "#1" -> "1", "#" -> "")
   const cleanQuery = queryLower.startsWith('#') ? queryLower.slice(1).trim() : queryLower;
-  const cleanTokens = tokens.map((t) => (t.startsWith('#') ? t.slice(1) : t)).filter(Boolean);
 
-  const matched: IndexedCustomerRecord[] = [];
+  const matched: { item: IndexedCustomerRecord; rank: number }[] = [];
 
-  for (const item of customers) {
-    // Multi-word token matching across EVERY field:
-    // Every token must match either combinedSearchText or sno (with # stripped)
-    const matchesAllTokens = tokens.every((token) => {
-      if (item.combinedSearchText.includes(token)) {
-        return true;
+  if (isOneChar) {
+    // -------------------------------------------------------------
+    // 1-Character Query Mode:
+    // Match any row where any field value OR any word inside a field starts with that character
+    // (no noisy middle-of-word matches).
+    // -------------------------------------------------------------
+    const char = queryLower;
+    const cleanChar = char === '#' ? '' : char;
+
+    for (const item of customers) {
+      let isMatch = false;
+      let hasWordStartsWith = false;
+
+      if (char === '#') {
+        // Typing '#' matches all rows having an SNo
+        if (item.sno) isMatch = true;
+      } else if (cleanChar) {
+        if (item.snoNormalized && item.snoNormalized.startsWith(cleanChar)) {
+          isMatch = true;
+          hasWordStartsWith = true;
+        } else if (item.wordsLower.some((w) => w.startsWith(cleanChar))) {
+          isMatch = true;
+          hasWordStartsWith = true;
+        } else if (item.fieldValuesLower.some((fv) => fv.startsWith(cleanChar))) {
+          isMatch = true;
+          hasWordStartsWith = true;
+        }
       }
-      const cleanToken = token.startsWith('#') ? token.slice(1) : token;
-      if (cleanToken) {
-        if (item.combinedSearchText.includes(cleanToken)) {
+
+      if (isMatch) {
+        // Determine rank for 1-char mode:
+        // Rank 1: exact sno match (e.g. typing "1" when sno is "1")
+        // Rank 2: field or word starts-with match
+        // Rank 3: other matches
+        let rank = 3;
+        if (cleanChar && item.snoNormalized === cleanChar) {
+          rank = 1;
+        } else if (hasWordStartsWith) {
+          rank = 2;
+        }
+        matched.push({ item, rank });
+      }
+    }
+  } else {
+    // -------------------------------------------------------------
+    // 2+ Character Query Mode:
+    // Full multi-word substring token matching across all columns
+    // (every typed word must match somewhere in the row).
+    // -------------------------------------------------------------
+    const tokens = queryLower.split(/\s+/).filter(Boolean);
+    const cleanTokens = tokens.map((t) => (t.startsWith('#') ? t.slice(1) : t)).filter(Boolean);
+
+    for (const item of customers) {
+      const matchesAllTokens = tokens.every((token) => {
+        if (item.combinedSearchText.includes(token)) {
           return true;
         }
-        if (item.snoNormalized && (item.snoNormalized === cleanToken || item.snoNormalized.startsWith(cleanToken))) {
-          return true;
+        const cleanToken = token.startsWith('#') ? token.slice(1) : token;
+        if (cleanToken) {
+          if (item.combinedSearchText.includes(cleanToken)) {
+            return true;
+          }
+          if (item.snoNormalized && (item.snoNormalized === cleanToken || item.snoNormalized.startsWith(cleanToken))) {
+            return true;
+          }
         }
-      }
-      return false;
-    });
+        return false;
+      });
 
-    if (matchesAllTokens) {
-      matched.push(item);
+      if (matchesAllTokens) {
+        // Determine rank for 2+ char mode:
+        // Rank 1: exact sno match against full cleanQuery or any token
+        // Rank 2: field or word starts-with match
+        // Rank 3: general substring match
+        let rank = 3;
+        if (cleanQuery && item.snoNormalized === cleanQuery) {
+          rank = 1;
+        } else if (cleanTokens.some((ct) => item.snoNormalized === ct)) {
+          rank = 1;
+        } else if (
+          (cleanQuery && item.snoNormalized.startsWith(cleanQuery)) ||
+          item.fieldValuesLower.some((fv) => fv.startsWith(queryLower) || (cleanQuery && fv.startsWith(cleanQuery))) ||
+          item.wordsLower.some((w) => w.startsWith(queryLower) || (cleanQuery && w.startsWith(cleanQuery)))
+        ) {
+          rank = 2;
+        }
+
+        matched.push({ item, rank });
+      }
     }
   }
 
-  // Ranking / Sorting:
-  // Exact sno matches first (rank 1), then sno starts-with matches (rank 2), then newest date first
-  const getSnoRank = (item: IndexedCustomerRecord): number => {
-    if (!item.snoNormalized) return 3;
-
-    // Check exact SNo match: against full query (stripped) or any individual clean token
-    if (cleanQuery && item.snoNormalized === cleanQuery) {
-      return 1;
-    }
-    for (const ct of cleanTokens) {
-      if (item.snoNormalized === ct) {
-        return 1;
-      }
-    }
-
-    // Check SNo starts-with match
-    if (cleanQuery && item.snoNormalized.startsWith(cleanQuery)) {
-      return 2;
-    }
-    for (const ct of cleanTokens) {
-      if (item.snoNormalized.startsWith(ct)) {
-        return 2;
-      }
-    }
-
-    return 3;
-  };
-
+  // Sorting priority:
+  // 1. Exact sno match first (rank 1)
+  // 2. Field or word starts-with match (rank 2)
+  // 3. General substring match (rank 3)
+  // 4. Newest date first
   matched.sort((a, b) => {
-    const rankA = getSnoRank(a);
-    const rankB = getSnoRank(b);
-    if (rankA !== rankB) {
-      return rankA - rankB; // Rank 1 before Rank 2 before Rank 3
+    if (a.rank !== b.rank) {
+      return a.rank - b.rank;
     }
-    // Secondary sort: newest date first
-    return b.dateStr.localeCompare(a.dateStr);
+    return b.item.dateStr.localeCompare(a.item.dateStr);
   });
 
-  return matched;
+  return matched.map((m) => m.item);
 }
