@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
-import { IndexedCustomerRecord } from '../utils/customerSearch';
+import {
+  IndexedCustomerRecord,
+  filterAndRankCustomers,
+  shouldTriggerCustomerSearch,
+} from '../utils/customerSearch';
 
 interface CustomerAutocompleteProps {
   value: string;
@@ -27,19 +31,7 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
   const listRef = useRef<HTMLUListElement>(null);
 
   const suggestions = useMemo(() => {
-    const query = value.trim().toLowerCase();
-    if (query.length < 2 || customers.length === 0) return [];
-    const tokens = query.split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return [];
-
-    const matched: IndexedCustomerRecord[] = [];
-    for (const item of customers) {
-      const matchesAll = tokens.every((token) => item.combinedSearchText.includes(token));
-      if (matchesAll) {
-        matched.push(item);
-      }
-    }
-    return matched;
+    return filterAndRankCustomers(customers, value);
   }, [value, customers]);
 
   useEffect(() => {
@@ -75,11 +67,11 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const nextVal = e.target.value;
     onChange(nextVal);
-    setIsOpen(nextVal.trim().length >= 2);
+    setIsOpen(shouldTriggerCustomerSearch(nextVal));
   };
 
   const handleFocus = () => {
-    if (value.trim().length >= 2 && suggestions.length > 0) {
+    if (shouldTriggerCustomerSearch(value) && suggestions.length > 0) {
       setIsOpen(true);
     }
   };
@@ -177,7 +169,14 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-slate-900 truncate">{entry.primaryName}</span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {record.sno && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200/80 shrink-0">
+                          #{record.sno.replace(/^#/, '')}
+                        </span>
+                      )}
+                      <span className="text-xs font-bold text-slate-900 truncate">{entry.primaryName}</span>
+                    </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {refBadge && (
                         <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200/60">

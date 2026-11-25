@@ -1,11 +1,34 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, Plugin} from 'vite';
+
+function customerApiPlugin(): Plugin {
+  return {
+    name: 'customer-api-dev-middleware',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const url = req.url || '';
+        if (url === '/api/customers' || url.startsWith('/api/customers?')) {
+          try {
+            const { default: handler } = await import('./api/customers');
+            await handler(req, res);
+          } catch (e: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: e?.message || 'Server error' }));
+          }
+          return;
+        }
+        next();
+      });
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), customerApiPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

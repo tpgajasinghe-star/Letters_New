@@ -530,7 +530,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                 Customer Address <span className="text-red-500">*</span>
               </label>
               <p className="text-xs text-slate-500">
-                Type 2+ characters to search customer database or enter manually (one per line)
+                Type SNo (#1, 1), name, PO/Invoice, or address to search customer database (or enter manually)
               </p>
             </div>
           </div>
