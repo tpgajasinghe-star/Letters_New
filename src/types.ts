@@ -35,6 +35,7 @@ export interface LetterWordingOverrides {
   introParagraph1?: string;
   introParagraph2?: string;
   itemsHeader?: string;
+  noteContent?: string;
   bodyParagraphs?: string[];
   thankYou?: string;
   closing?: string;

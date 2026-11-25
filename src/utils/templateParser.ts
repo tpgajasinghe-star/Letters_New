@@ -199,20 +199,20 @@ export function formatDateForCertificate(dateStr: string): string {
  */
 export function getCommonWarrantySubject(poNumber?: string, refType?: 'PO' | 'Invoice'): string {
   const trimmed = poNumber?.trim();
-  const label = refType === 'Invoice' ? 'Invoice' : 'PO';
+  const isInvoice = refType === 'Invoice';
   if (!trimmed) {
-    return `Warranty Certificate for Kevilton Products Supplied Against ${label} [${label} Number]`;
+    return 'Warranty Certificate for Kevilton Products Supplied';
   }
   if (/^against\s+/i.test(trimmed)) {
     return `Warranty Certificate for Kevilton Products Supplied ${trimmed}`;
   }
-  if (refType === 'Invoice') {
-    if (/^inv\b|^invoice\b|^inv[-:/]/i.test(trimmed)) {
+  if (isInvoice) {
+    if (/^inv\b|^invoice\b/i.test(trimmed)) {
       return `Warranty Certificate for Kevilton Products Supplied Against ${trimmed}`;
     }
     return `Warranty Certificate for Kevilton Products Supplied Against Invoice ${trimmed}`;
   } else {
-    if (/^po\b|^po[-:/]/i.test(trimmed)) {
+    if (/^po\b/i.test(trimmed)) {
       return `Warranty Certificate for Kevilton Products Supplied Against ${trimmed}`;
     }
     return `Warranty Certificate for Kevilton Products Supplied Against PO ${trimmed}`;

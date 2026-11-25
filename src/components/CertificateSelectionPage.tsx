@@ -570,7 +570,10 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
                 ) : (
                   content.introParagraph1.trim() && (
                     <p className="text-justify whitespace-pre-line">
-                      {renderRichText(content.introParagraph1, [KEVILTON_COMPANY_NAME])}
+                      {renderRichText(content.introParagraph1, [
+                        KEVILTON_COMPANY_NAME,
+                        content.referenceName,
+                      ])}
                     </p>
                   )
                 )}
@@ -611,7 +614,64 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
                 {/* Product Items Table */}
                 {renderProductTable()}
 
-                {/* Note & Clauses */}
+                {/* Optional Note Below Table */}
+                {effectiveEditMode ? (
+                  formData.noteOption === 'withNote' ? (
+                    <div className="my-2.5 p-2 bg-blue-50/40 border border-blue-200/70 rounded-lg">
+                      <div className="flex items-start gap-1 text-[11.5px] leading-normal text-justify">
+                        <span className="font-bold select-none pt-0.5">Note:</span>
+                        <div className="flex-1">
+                          <InlineEditableText
+                            value={content.noteText}
+                            onChange={(val) => {
+                              updateWordingOverride('noteContent', val);
+                              onChangeFormData({ noteContent: val });
+                            }}
+                            allowNewlines
+                            className="text-justify leading-normal"
+                            placeholder="Enter additional note content to appear below the items table..."
+                            ariaLabel="Additional note content"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-end mt-1 no-print">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onChangeFormData({ noteOption: 'withoutNote', noteContent: '' });
+                            updateWordingOverride('noteContent', undefined);
+                          }}
+                          className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-red-500 cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Remove note</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="my-1.5 no-print">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onChangeFormData({ noteOption: 'withNote', noteContent: '' })
+                        }
+                        className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded border border-dashed border-slate-300 transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Add Note below table</span>
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  content.hasNote && (
+                    <div className="my-2.5 text-[11.5px] leading-normal text-justify whitespace-pre-line">
+                      <strong className="font-bold">Note: </strong>
+                      <span>{content.noteText}</span>
+                    </div>
+                  )
+                )}
+
+                {/* Clauses */}
                 <div className="space-y-2 text-[11.5px] leading-normal text-justify">
                   {content.bodyParagraphs.map((paragraph, idx) =>
                     effectiveEditMode ? (
@@ -626,7 +686,7 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
                     ) : (
                       paragraph.trim() && (
                         <p key={idx} className="whitespace-pre-line">
-                          {renderRichText(paragraph, idx === 0 ? ['Note:'] : [])}
+                          {renderRichText(paragraph, [KEVILTON_COMPANY_NAME])}
                         </p>
                       )
                     )
@@ -736,7 +796,7 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
                   content.introParagraph1.trim() && (
                     <p className="text-justify whitespace-pre-line">
                       {renderRichText(content.introParagraph1, [
-                        content.companyName,
+                        content.referenceName,
                         KEVILTON_COMPANY_NAME,
                       ])}
                     </p>
@@ -745,6 +805,63 @@ export const CertificateSelectionPage: React.FC<CertificateSelectionPageProps> =
 
                 {/* Product Items Table */}
                 {renderProductTable()}
+
+                {/* Optional Note Below Table */}
+                {effectiveEditMode ? (
+                  formData.noteOption === 'withNote' ? (
+                    <div className="my-2.5 p-2 bg-blue-50/40 border border-blue-200/70 rounded-lg">
+                      <div className="flex items-start gap-1 text-[11.5px] leading-normal text-justify">
+                        <span className="font-bold select-none pt-0.5">Note:</span>
+                        <div className="flex-1">
+                          <InlineEditableText
+                            value={content.noteText}
+                            onChange={(val) => {
+                              updateWordingOverride('noteContent', val);
+                              onChangeFormData({ noteContent: val });
+                            }}
+                            allowNewlines
+                            className="text-justify leading-normal"
+                            placeholder="Enter additional note content to appear below the items table..."
+                            ariaLabel="Additional note content"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-end mt-1 no-print">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onChangeFormData({ noteOption: 'withoutNote', noteContent: '' });
+                            updateWordingOverride('noteContent', undefined);
+                          }}
+                          className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-red-500 cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Remove note</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="my-1.5 no-print">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onChangeFormData({ noteOption: 'withNote', noteContent: '' })
+                        }
+                        className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded border border-dashed border-slate-300 transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Add Note below table</span>
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  content.hasNote && (
+                    <div className="my-2.5 text-[11.5px] leading-normal text-justify whitespace-pre-line">
+                      <strong className="font-bold">Note: </strong>
+                      <span>{content.noteText}</span>
+                    </div>
+                  )
+                )}
 
                 {/* Body Legal Paragraphs */}
                 <div className="space-y-2 text-[11.5px] leading-normal text-justify">

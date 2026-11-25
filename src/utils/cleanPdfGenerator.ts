@@ -247,7 +247,10 @@ export async function generateCleanWarrantyPdf(formData: WarrantyFormData): Prom
       cursorY =
         renderRichParagraph(
           doc,
-          splitStyledSpans(content.introParagraph1, [KEVILTON_COMPANY_NAME]),
+          splitStyledSpans(content.introParagraph1, [
+            KEVILTON_COMPANY_NAME,
+            content.referenceName,
+          ]),
           marginX,
           cursorY,
           printableWidth,
@@ -318,15 +321,28 @@ export async function generateCleanWarrantyPdf(formData: WarrantyFormData): Prom
     // @ts-expect-error autoTable adds lastAutoTable to doc
     cursorY = doc.lastAutoTable.finalY + 6.5;
 
+    // Optional Note Below Table (if With Note is selected and has content)
+    if (content.hasNote && content.noteText.trim()) {
+      cursorY =
+        renderRichParagraph(
+          doc,
+          splitStyledSpans(`Note: ${content.noteText}`, ['Note:']),
+          marginX,
+          cursorY,
+          printableWidth,
+          10.5,
+          5.0
+        ) + 3.5;
+    }
+
     // Note & Disclaimers
     content.bodyParagraphs.forEach((paragraph, idx) => {
       if (!paragraph.trim()) return;
-      const boldTerms = idx === 0 ? ['Note:'] : [];
       const spacingAfter = idx === content.bodyParagraphs.length - 1 ? 4 : 3;
       cursorY =
         renderRichParagraph(
           doc,
-          splitStyledSpans(paragraph, boldTerms),
+          splitStyledSpans(paragraph, [KEVILTON_COMPANY_NAME]),
           marginX,
           cursorY,
           printableWidth,
@@ -375,12 +391,15 @@ export async function generateCleanWarrantyPdf(formData: WarrantyFormData): Prom
     doc.text(titleLines, marginX, cursorY);
     cursorY += titleLines.length * 5.5 + 4;
 
-    // Paragraph 1 (with company name and Kevilton bold)
+    // Paragraph 1 (with reference name and Kevilton bold)
     if (content.introParagraph1.trim()) {
       cursorY =
         renderRichParagraph(
           doc,
-          splitStyledSpans(content.introParagraph1, [content.companyName, KEVILTON_COMPANY_NAME]),
+          splitStyledSpans(content.introParagraph1, [
+            content.referenceName,
+            KEVILTON_COMPANY_NAME,
+          ]),
           marginX,
           cursorY,
           printableWidth,
@@ -428,6 +447,20 @@ export async function generateCleanWarrantyPdf(formData: WarrantyFormData): Prom
 
     // @ts-expect-error autoTable adds lastAutoTable to doc
     cursorY = doc.lastAutoTable.finalY + 6.5;
+
+    // Optional Note Below Table (if With Note is selected and has content)
+    if (content.hasNote && content.noteText.trim()) {
+      cursorY =
+        renderRichParagraph(
+          doc,
+          splitStyledSpans(`Note: ${content.noteText}`, ['Note:']),
+          marginX,
+          cursorY,
+          printableWidth,
+          10,
+          4.6
+        ) + 3.0;
+    }
 
     // Body Legal Paragraphs
     content.bodyParagraphs.forEach((paragraph, idx) => {

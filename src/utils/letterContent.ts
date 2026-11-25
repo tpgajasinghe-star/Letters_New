@@ -1,4 +1,4 @@
-import { LetterWordingOverrides, WarrantyFormData, WarrantyTableRow } from '../types';
+import { LetterWordingOverrides, ReferenceTypeOption, WarrantyFormData, WarrantyTableRow } from '../types';
 import { formatDateForCertificate, parseCustomerAddress, getCommonWarrantySubject } from './templateParser';
 
 export interface StyledSpan {
@@ -11,12 +11,16 @@ export interface ResolvedLetterContent {
   dateText: string;
   addressLines: string[];
   companyName: string;
+  referenceName: string;
+  referenceType: ReferenceTypeOption;
   poNumberText: string;
   salutation: string;
   subject: string;
   introParagraph1: string;
   introParagraph2: string;
   itemsHeader: string;
+  hasNote: boolean;
+  noteText: string;
   bodyParagraphs: string[];
   thankYou: string;
   closing: string;
@@ -40,6 +44,7 @@ export function hasCustomWording(overrides?: LetterWordingOverrides): boolean {
     overrides.introParagraph1 !== undefined ||
     overrides.introParagraph2 !== undefined ||
     overrides.itemsHeader !== undefined ||
+    overrides.noteContent !== undefined ||
     overrides.thankYou !== undefined ||
     overrides.closing !== undefined ||
     overrides.closingCompany !== undefined ||
@@ -98,12 +103,32 @@ export function parseEditedDateToIso(input: string): string | null {
 
 /**
  * Splits a plain string into styled spans, bolding exact occurrences of specified phrases
- * (e.g., "Kevilton Electrical Products (Pvt.) Ltd.", "Note:", company name, PO number).
+ * (e.g., "Kevilton Electrical Products (Pvt.) Ltd.", "Note:", company name, PO number)
+ * as well as markdown **bold** markers if present.
  */
 export function splitStyledSpans(text: string, boldTerms: string[]): StyledSpan[] {
-  const cleanTerms = Array.from(new Set(boldTerms.filter((t) => t && t.trim().length > 0)));
-  if (!text || cleanTerms.length === 0) {
-    return [{ text }];
+  if (!text) {
+    return [{ text: '' }];
+  }
+
+  // Extract any markdown **phrase** from text
+  const markdownBoldMatches: string[] = [];
+  const mdRegex = /\*\*(.+?)\*\*/g;
+  let mdMatch: RegExpExecArray | null;
+  while ((mdMatch = mdRegex.exec(text)) !== null) {
+    if (mdMatch[1]?.trim()) {
+      markdownBoldMatches.push(mdMatch[1]);
+    }
+  }
+
+  // Remove ** markers from text
+  const cleanedText = text.replace(/\*\*(.+?)\*\*/g, '$1');
+
+  const cleanTerms = Array.from(
+    new Set([...boldTerms, ...markdownBoldMatches].filter((t) => t && t.trim().length > 0))
+  );
+  if (cleanTerms.length === 0) {
+    return [{ text: cleanedText }];
   }
 
   // Sort longest first so overlapping phrases match cleanly
@@ -111,14 +136,14 @@ export function splitStyledSpans(text: string, boldTerms: string[]): StyledSpan[
   const escaped = cleanTerms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const regex = new RegExp(`(${escaped.join('|')})`, 'g');
 
-  const parts = text.split(regex);
+  const parts = cleanedText.split(regex);
   const spans: StyledSpan[] = [];
   for (const part of parts) {
     if (!part) continue;
     const isBold = cleanTerms.includes(part);
     spans.push(isBold ? { text: part, bold: true } : { text: part });
   }
-  return spans.length > 0 ? spans : [{ text }];
+  return spans.length > 0 ? spans : [{ text: cleanedText }];
 }
 
 /**
@@ -138,33 +163,47 @@ export function resolveLetterContent(
   const dateText = overrides?.dateDisplay !== undefined ? overrides.dateDisplay : defaultFormattedDate;
 
   const companyName = parsedAddr.companyName || '[Company Name]';
-  const refType = formData.refInvoiceType === 'Invoice' ? 'Invoice' : 'PO';
-  const refNumberText = formData.poNumber?.trim() || `[${formData.poInvoiceType === 'Invoice' ? 'Invoice' : 'PO'} Number]`;
-  const referenceName = formData.referenceName?.trim() || companyName;
-  const referenceType = formData.referenceType || 'companyName';
+  const referenceType: ReferenceTypeOption = formData.referenceType || 'companyName';
+
+  // Fallback reference name based on selected reference type
+  const fallbackRefName =
+    referenceType === 'projectName'
+      ? '[Project Name]'
+      : referenceType === 'customerName'
+      ? (parsedAddr.customerName && parsedAddr.customerName !== 'Mr./Ms. [Customer Name]'
+          ? parsedAddr.customerName
+          : '[Customer Name]')
+      : companyName;
+
+  const referenceName = formData.referenceName?.trim() || fallbackRefName;
+
+  // Document reference label & number (PO vs Invoice)
+  const isInvoice = formData.poInvoiceType === 'Invoice';
+  const docTypeLabel = isInvoice ? 'Invoice' : 'PO';
+  const docNoLabel = isInvoice ? 'Invoice No.' : 'Purchase Order No.';
+  const rawNumber = formData.poNumber?.trim();
+  const fallbackNumber = `[${docTypeLabel} Number]`;
+  const docNumberDisplay = rawNumber || fallbackNumber;
+
+  // Optional Note resolution
+  const isWithNote = formData.noteOption === 'withNote';
+  const rawNote =
+    overrides?.noteContent !== undefined ? overrides.noteContent : (formData.noteContent || '');
+  const cleanNote = rawNote.trim().replace(/^note:\s*/i, '');
+  const hasNote = isWithNote && cleanNote.length > 0;
 
   if (isPoCertificate) {
     const defaultBodyParagraphs = [
-      'Note: The above warranty covers manufacturing defects under normal installation and operating conditions from the date of purchase.',
+      'The above warranty covers manufacturing defects under normal installation and operating conditions from the date of purchase.',
       'This warranty does not cover defects or damage resulting from improper installation, misuse, accidents, unauthorized modifications, negligence, or external causes. Proof of purchase and relevant product identification details are required for any warranty claim.',
       'Should you require any further information regarding this warranty, please do not hesitate to contact us.',
     ];
 
-    let bodyParagraphs = defaultBodyParagraphs.map((def, idx) =>
+    const bodyParagraphs = defaultBodyParagraphs.map((def, idx) =>
       overrides?.bodyParagraphs?.[idx] !== undefined ? overrides.bodyParagraphs[idx] : def
     );
 
-    // If noteOption is 'withNote' and noteContent is provided, insert as first paragraph or prepend note
-    const noteText = formData.noteContent?.trim();
-    if (formData.noteOption === 'withNote' && noteText) {
-      const formattedNote = noteText.toLowerCase().startsWith('note:') ? noteText : `Note: ${noteText}`;
-      bodyParagraphs = [formattedNote, ...bodyParagraphs];
-    } else if (formData.noteOption === 'withoutNote') {
-      // Remove any leading Note paragraph if withoutNote is selected
-      bodyParagraphs = bodyParagraphs.filter((p) => !p.trim().toLowerCase().startsWith('note:'));
-    }
-
-    // 1st paragraph rules for Template 2
+    // 1st paragraph rules for Template 2 (Common Warranty Certificate)
     let defaultIntro1 = '';
     if (referenceType === 'projectName') {
       defaultIntro1 = `We, ${KEVILTON_COMPANY_NAME}, sincerely appreciate the trust placed in our products for the ${referenceName}. We are committed to providing high-quality products that comply with national and international standards.`;
@@ -173,15 +212,16 @@ export function resolveLetterContent(
     }
 
     // 2nd paragraph rules for Template 2 (PO vs Invoice)
-    const docLabel = formData.poInvoiceType === 'Invoice' ? 'Invoice No.' : 'Purchase Order No.';
-    const defaultIntro2 = `We hereby confirm that the following products supplied against ${docLabel} ${refNumberText} are covered under the Kevilton warranty program.`;
+    const defaultIntro2 = `We hereby confirm that the following products supplied against ${docNoLabel} ${docNumberDisplay} are covered under the Kevilton warranty program.`;
 
     return {
       isPoCertificate: true,
       dateText,
       addressLines: parsedAddr.formattedLines,
       companyName,
-      poNumberText: refNumberText,
+      referenceName,
+      referenceType,
+      poNumberText: docNumberDisplay,
       salutation: overrides?.salutation !== undefined ? overrides.salutation : 'Dear Sir/Madam,',
       subject:
         overrides?.subject !== undefined
@@ -195,6 +235,8 @@ export function resolveLetterContent(
         overrides?.itemsHeader !== undefined
           ? overrides.itemsHeader
           : 'Items Covered Under This Warranty:',
+      hasNote,
+      noteText: cleanNote,
       bodyParagraphs,
       thankYou: overrides?.thankYou !== undefined ? overrides.thankYou : 'Thank you.',
       closing: overrides?.closing !== undefined ? overrides.closing : 'Yours faithfully,',
@@ -220,19 +262,11 @@ export function resolveLetterContent(
     'Should you require any further information regarding this warranty, please do not hesitate to contact us.',
   ];
 
-  let bodyParagraphs = defaultBodyParagraphs.map((def, idx) =>
+  const bodyParagraphs = defaultBodyParagraphs.map((def, idx) =>
     overrides?.bodyParagraphs?.[idx] !== undefined ? overrides.bodyParagraphs[idx] : def
   );
 
-  const noteText = formData.noteContent?.trim();
-  if (formData.noteOption === 'withNote' && noteText) {
-    const formattedNote = noteText.toLowerCase().startsWith('note:') ? noteText : `Note: ${noteText}`;
-    bodyParagraphs = [formattedNote, ...bodyParagraphs];
-  } else if (formData.noteOption === 'withoutNote') {
-    bodyParagraphs = bodyParagraphs.filter((p) => !p.trim().toLowerCase().startsWith('note:'));
-  }
-
-  // 1st paragraph rules for Template 1
+  // 1st paragraph rules for Template 1 (Common Draft Warranty Certificate)
   let defaultIntro1 = '';
   if (referenceType === 'projectName') {
     defaultIntro1 = `With reference to the products to be supplied for the ${referenceName}, we hereby confirm that ${KEVILTON_COMPANY_NAME} provides the following warranty for the products detailed below:`;
@@ -245,7 +279,9 @@ export function resolveLetterContent(
     dateText,
     addressLines: parsedAddr.formattedLines,
     companyName,
-    poNumberText: refNumberText,
+    referenceName,
+    referenceType,
+    poNumberText: docNumberDisplay,
     salutation: overrides?.salutation !== undefined ? overrides.salutation : 'Dear Sir/Madam,',
     subject:
       overrides?.subject !== undefined
@@ -255,6 +291,8 @@ export function resolveLetterContent(
       overrides?.introParagraph1 !== undefined ? overrides.introParagraph1 : defaultIntro1,
     introParagraph2: '',
     itemsHeader: '',
+    hasNote,
+    noteText: cleanNote,
     bodyParagraphs,
     thankYou: overrides?.thankYou !== undefined ? overrides.thankYou : 'Thank you.',
     closing: overrides?.closing !== undefined ? overrides.closing : 'Yours Faithfully,',

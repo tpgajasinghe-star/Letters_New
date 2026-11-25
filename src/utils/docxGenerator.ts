@@ -24,17 +24,36 @@ function createRichParagraph(
   spacingAfter: number
 ): Paragraph {
   const spans = splitStyledSpans(text, boldTerms);
+  const runs: TextRun[] = [];
+
+  for (const span of spans) {
+    const rawLines = span.text.split('\n');
+    rawLines.forEach((lineText, lineIdx) => {
+      if (lineIdx > 0) {
+        runs.push(
+          new TextRun({
+            break: 1,
+            font: 'Times New Roman',
+            size,
+          })
+        );
+      }
+      if (lineText) {
+        runs.push(
+          new TextRun({
+            text: lineText,
+            font: 'Times New Roman',
+            size,
+            bold: !!span.bold,
+          })
+        );
+      }
+    });
+  }
+
   return new Paragraph({
     spacing: { after: spacingAfter },
-    children: spans.map(
-      (span) =>
-        new TextRun({
-          text: span.text,
-          font: 'Times New Roman',
-          size,
-          bold: !!span.bold,
-        })
-    ),
+    children: runs,
   });
 }
 
@@ -121,7 +140,12 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
     // Opening Paragraph 1
     if (content.introParagraph1.trim()) {
       docChildren.push(
-        createRichParagraph(content.introParagraph1, [KEVILTON_COMPANY_NAME], 21, 160)
+        createRichParagraph(
+          content.introParagraph1,
+          [KEVILTON_COMPANY_NAME, content.referenceName],
+          21,
+          160
+        )
       );
     }
 
@@ -179,11 +203,18 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
 
     docChildren.push(new Paragraph({ spacing: { after: 200 } }));
 
-    // Note & Disclaimers
-    content.bodyParagraphs.forEach((paragraph, idx) => {
+    // Optional Note Below Table (if With Note is selected and has content)
+    if (content.hasNote && content.noteText.trim()) {
+      docChildren.push(
+        createRichParagraph(`Note: ${content.noteText}`, ['Note:'], 20, 160)
+      );
+    }
+
+    // Clauses
+    content.bodyParagraphs.forEach((paragraph) => {
       if (!paragraph.trim()) return;
       docChildren.push(
-        createRichParagraph(paragraph, idx === 0 ? ['Note:'] : [], 20, 140)
+        createRichParagraph(paragraph, [KEVILTON_COMPANY_NAME], 20, 140)
       );
     });
 
@@ -280,7 +311,7 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
       docChildren.push(
         createRichParagraph(
           content.introParagraph1,
-          [content.companyName, KEVILTON_COMPANY_NAME],
+          [content.referenceName, KEVILTON_COMPANY_NAME],
           21,
           180
         )
@@ -316,6 +347,13 @@ export async function generateCleanWarrantyDocx(formData: WarrantyFormData): Pro
     );
 
     docChildren.push(new Paragraph({ spacing: { after: 200 } }));
+
+    // Optional Note Below Table (if With Note is selected and has content)
+    if (content.hasNote && content.noteText.trim()) {
+      docChildren.push(
+        createRichParagraph(`Note: ${content.noteText}`, ['Note:'], 20, 160)
+      );
+    }
 
     // Body Paragraphs
     content.bodyParagraphs.forEach((paragraph) => {

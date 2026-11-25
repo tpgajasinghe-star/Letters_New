@@ -44,10 +44,12 @@ export function loadCustomerRecords(): Promise<IndexedCustomerRecord[]> {
         return res.json();
       })
       .catch(() => {
-        return fetch(fallbackPath).then((res) => {
-          if (!res.ok) return [];
-          return res.json();
-        });
+        return fetch(fallbackPath)
+          .then((res) => {
+            if (!res.ok) return [];
+            return res.json().catch(() => []);
+          })
+          .catch(() => []);
       })
       .then((raw: unknown) => {
         if (!Array.isArray(raw)) {
@@ -59,11 +61,11 @@ export function loadCustomerRecords(): Promise<IndexedCustomerRecord[]> {
           if (!entry || typeof entry !== 'object') continue;
           const rec = entry as Partial<CustomerRecord>;
           const locationAddress = typeof rec.locationAddress === 'string' ? rec.locationAddress.trim() : '';
-          if (!locationAddress) continue;
-
           const customerName = typeof rec.customerName === 'string' ? rec.customerName.trim() : '';
           const companyName = typeof rec.companyName === 'string' ? rec.companyName.trim() : '';
           const projectName = typeof rec.projectName === 'string' ? rec.projectName.trim() : '';
+          if (!locationAddress && !customerName && !companyName && !projectName) continue;
+
           const refType = rec.refType === 'Invoice' ? 'Invoice' : rec.refType === 'PO' ? 'PO' : '';
           const refNumber = typeof rec.refNumber === 'string' ? rec.refNumber.trim() : '';
           const emailSubject = typeof rec.emailSubject === 'string' ? rec.emailSubject.trim() : '';

@@ -152,7 +152,15 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
             {suggestions.map((entry, idx) => {
               const isHighlighted = idx === highlightedIndex;
               const { record } = entry;
-              const refBadge = record.refType && record.refNumber ? `${record.refType} ${record.refNumber}` : '';
+              let refBadge = '';
+              if (record.refNumber?.trim()) {
+                const trimmedNum = record.refNumber.trim();
+                if (record.refType && !trimmedNum.toUpperCase().startsWith(record.refType.toUpperCase())) {
+                  refBadge = `${record.refType} ${trimmedNum}`;
+                } else {
+                  refBadge = trimmedNum;
+                }
+              }
 
               return (
                 <li

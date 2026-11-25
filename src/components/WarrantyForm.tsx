@@ -3,7 +3,7 @@ import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, 
 import { WarrantyFormData, ProductItemRow, ReferenceTypeOption, PoInvoiceTypeOption, NoteOption } from '../types';
 import { CatalogItem, CatalogMatch } from '../utils/warrantyRules';
 import { IndexedCatalogItem, getCachedCatalog, loadCatalogItems } from '../utils/catalogSearch';
-import { IndexedCustomerRecord, getCachedCustomers, loadCustomerRecords } from '../utils/customerSearch';
+import { CustomerRecord, IndexedCustomerRecord, getCachedCustomers, loadCustomerRecords } from '../utils/customerSearch';
 import { ProductDescriptionAutocomplete } from './ProductDescriptionAutocomplete';
 import { CustomerAutocomplete } from './CustomerAutocomplete';
 import { parseCustomerAddress } from '../utils/templateParser';
@@ -34,6 +34,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
   const [catalog, setCatalog] = useState<IndexedCatalogItem[]>(() => getCachedCatalog());
   const [customers, setCustomers] = useState<IndexedCustomerRecord[]>(() => getCachedCustomers());
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord | null>(null);
   const [hasManuallyEditedReference, setHasManuallyEditedReference] = useState(false);
 
   const customerAddressRef = useRef<HTMLTextAreaElement>(null);
@@ -66,9 +67,9 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
   const poInvoiceType: PoInvoiceTypeOption = formData.poInvoiceType || 'PO';
   const noteOption: NoteOption = formData.noteOption || 'withoutNote';
 
-  // Smart auto-fill for reference name if typing manually
+  // Smart auto-fill for reference name if typing manually (when no selected customer)
   useEffect(() => {
-    if (hasManuallyEditedReference) return;
+    if (selectedCustomer || hasManuallyEditedReference) return;
     const parsed = parseCustomerAddress(formData.customerAddress);
     let autoRef = '';
     if (referenceType === 'projectName') {
@@ -81,7 +82,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
     if (autoRef && autoRef !== formData.referenceName) {
       onChange({ referenceName: autoRef });
     }
-  }, [formData.customerAddress, referenceType, hasManuallyEditedReference]);
+  }, [formData.customerAddress, referenceType, hasManuallyEditedReference, selectedCustomer]);
 
   type InvalidFieldKey = 'customerAddress' | 'referenceName' | 'poNumber' | 'items' | 'noteContent' | 'date';
 
@@ -169,37 +170,47 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
   const handleSelectCustomer = (item: IndexedCustomerRecord) => {
     const { record } = item;
+    setSelectedCustomer(record);
+
     // 1. Populate Customer Address cleanly in order: customerName, companyName, projectName, locationAddress
     const addrLines: string[] = [];
-    if (record.customerName) addrLines.push(record.customerName);
-    if (record.companyName && record.companyName !== record.customerName) addrLines.push(record.companyName);
-    if (record.projectName && record.projectName !== record.companyName) addrLines.push(record.projectName);
-    if (record.locationAddress) addrLines.push(record.locationAddress);
+    const addUnique = (val?: string) => {
+      const trimmed = val?.trim();
+      if (!trimmed) return;
+      if (!addrLines.some((line) => line.toLowerCase() === trimmed.toLowerCase())) {
+        addrLines.push(trimmed);
+      }
+    };
+
+    addUnique(record.customerName);
+    addUnique(record.companyName);
+    addUnique(record.projectName);
+    addUnique(record.locationAddress);
 
     const cleanAddress = addrLines.join('\n');
 
     // 2. Set reference type and name based on priority: projectName -> companyName -> customerName
     let bestRefType: ReferenceTypeOption = 'companyName';
     let bestRefName = '';
-    if (record.projectName) {
+    if (record.projectName?.trim()) {
       bestRefType = 'projectName';
-      bestRefName = record.projectName;
-    } else if (record.companyName) {
+      bestRefName = record.projectName.trim();
+    } else if (record.companyName?.trim()) {
       bestRefType = 'companyName';
-      bestRefName = record.companyName;
-    } else if (record.customerName) {
+      bestRefName = record.companyName.trim();
+    } else if (record.customerName?.trim()) {
       bestRefType = 'customerName';
-      bestRefName = record.customerName;
+      bestRefName = record.customerName.trim();
     }
 
-    // 3. PO or Invoice auto-fill
+    // 3. PO or Invoice auto-fill (for Letter Type 2 or saved in state)
     let targetPoInvoiceType: PoInvoiceTypeOption = poInvoiceType;
     let targetPoNumber = formData.poNumber || '';
     if (record.refType === 'PO' || record.refType === 'Invoice') {
       targetPoInvoiceType = record.refType;
     }
-    if (record.refNumber) {
-      targetPoNumber = record.refNumber;
+    if (record.refNumber?.trim()) {
+      targetPoNumber = record.refNumber.trim();
     }
 
     setHasManuallyEditedReference(false);
@@ -210,20 +221,50 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       poInvoiceType: targetPoInvoiceType,
       poNumber: targetPoNumber,
     });
-    setErrors((prev) => ({ ...prev, customerAddress: undefined, referenceName: undefined, poNumber: undefined }));
+    setErrors((prev) => ({
+      ...prev,
+      customerAddress: undefined,
+      referenceName: undefined,
+      poNumber: undefined,
+    }));
   };
 
   const handleSelectLetterType = (type: 'declaration' | 'po_certificate') => {
-    onChange({
+    const update: Partial<WarrantyFormData> = {
       letterType: type,
-    });
+    };
+
+    // If switching to Letter Type 2, auto-select PO/Invoice and fill number if customer was selected
+    if (type === 'po_certificate' && selectedCustomer) {
+      if (selectedCustomer.refType === 'PO' || selectedCustomer.refType === 'Invoice') {
+        update.poInvoiceType = selectedCustomer.refType;
+      }
+      if (selectedCustomer.refNumber?.trim()) {
+        update.poNumber = selectedCustomer.refNumber.trim();
+      }
+    }
+
+    onChange(update);
     setErrors({});
   };
 
   const handleReferenceTypeChange = (newRefType: ReferenceTypeOption) => {
-    let nextName = formData.referenceName;
-    const parsed = parseCustomerAddress(formData.customerAddress);
-    if (!hasManuallyEditedReference || !nextName?.trim()) {
+    let nextName = '';
+
+    // If a suggested customer was selected, swap the reference input to that record's field if available
+    if (selectedCustomer) {
+      if (newRefType === 'projectName' && selectedCustomer.projectName?.trim()) {
+        nextName = selectedCustomer.projectName.trim();
+      } else if (newRefType === 'companyName' && selectedCustomer.companyName?.trim()) {
+        nextName = selectedCustomer.companyName.trim();
+      } else if (newRefType === 'customerName' && selectedCustomer.customerName?.trim()) {
+        nextName = selectedCustomer.customerName.trim();
+      }
+    }
+
+    // Fallback if no selected customer or the field wasn't available
+    if (!nextName) {
+      const parsed = parseCustomerAddress(formData.customerAddress);
       if (newRefType === 'projectName') {
         nextName = parsed.companyName || parsed.customerName || '';
       } else if (newRefType === 'customerName') {
@@ -232,10 +273,15 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
         nextName = parsed.companyName || parsed.customerName || '';
       }
     }
+
+    setHasManuallyEditedReference(false);
     onChange({
       referenceType: newRefType,
       referenceName: nextName,
     });
+    if (errors.referenceName) {
+      setErrors((prev) => ({ ...prev, referenceName: undefined }));
+    }
   };
 
   const handleAddItem = () => {
@@ -494,6 +540,9 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
             value={formData.customerAddress}
             customers={customers}
             onChange={(val) => {
+              if (selectedCustomer && !val.trim()) {
+                setSelectedCustomer(null);
+              }
               onChange({ customerAddress: val });
               if (errors.customerAddress) {
                 setErrors((prev) => ({ ...prev, customerAddress: undefined }));
