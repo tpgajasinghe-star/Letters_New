@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileText, Building2, HelpCircle } from 'lucide-react';
-import { WarrantyFormData, ProductItemRow, ReferenceTypeOption, PoInvoiceTypeOption, NoteOption } from '../types';
+import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileText, Building2, HelpCircle, CheckCircle2 } from 'lucide-react';
+import { WarrantyFormData, ProductItemRow, ReferenceTypeOption, PoInvoiceTypeOption, NoteOption, ParsedCustomerDetails } from '../types';
 import { CatalogItem, CatalogMatch } from '../utils/warrantyRules';
 import { IndexedCatalogItem, getCachedCatalog, loadCatalogItems } from '../utils/catalogSearch';
 import { CustomerRecord, IndexedCustomerRecord, getCachedCustomers, loadCustomerRecords } from '../utils/customerSearch';
 import { ProductDescriptionAutocomplete } from './ProductDescriptionAutocomplete';
 import { CustomerAutocomplete } from './CustomerAutocomplete';
+import { AiCustomerExtractor } from './AiCustomerExtractor';
 import { parseCustomerAddress } from '../utils/templateParser';
+import { parseCustomerWithAi, isUnstructuredCustomerRecord } from '../utils/customerExtractor';
+
 
 interface WarrantyFormProps {
   formData: WarrantyFormData;
@@ -36,6 +39,82 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
   const [customers, setCustomers] = useState<IndexedCustomerRecord[]>(() => getCachedCustomers());
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord | null>(null);
   const [hasManuallyEditedReference, setHasManuallyEditedReference] = useState(false);
+  const [isAiExtractingDropdown, setIsAiExtractingDropdown] = useState(false);
+  const [isAiBoxOpen, setIsAiBoxOpen] = useState(false);
+  const [aiSuccessMessage, setAiSuccessMessage] = useState<string | null>(null);
+  const successTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const showAiSuccessToast = (msg: string) => {
+    setAiSuccessMessage(msg);
+    if (successTimeoutRef.current) {
+      clearTimeout(successTimeoutRef.current);
+    }
+    successTimeoutRef.current = setTimeout(() => {
+      setAiSuccessMessage(null);
+    }, 4500);
+  };
+
+  const applyExtractedDetails = (data: ParsedCustomerDetails, successMsg?: string) => {
+    const cleanAddress = data.formattedAddressBlock?.trim() || formData.customerAddress;
+
+    let targetRefType: ReferenceTypeOption = formData.referenceType || 'companyName';
+    let targetRefName = formData.referenceName || '';
+
+    if (data.projectName?.trim()) {
+      targetRefType = 'projectName';
+      targetRefName = data.projectName.trim();
+    } else if (data.companyName?.trim()) {
+      targetRefType = 'companyName';
+      targetRefName = data.companyName.trim();
+    } else if (data.customerName?.trim()) {
+      targetRefType = 'customerName';
+      targetRefName = data.customerName.trim();
+    }
+
+    let targetPoInvoiceType: PoInvoiceTypeOption = formData.poInvoiceType || 'PO';
+    let targetPoNumber = formData.poNumber || '';
+
+    if (data.refType === 'PO' || data.refType === 'Invoice') {
+      targetPoInvoiceType = data.refType;
+    }
+    if (data.refNumber?.trim()) {
+      targetPoNumber = data.refNumber.trim();
+    } else if (data.poNumber?.trim()) {
+      targetPoInvoiceType = 'PO';
+      targetPoNumber = data.poNumber.trim();
+    } else if (data.invoiceNumber?.trim()) {
+      targetPoInvoiceType = 'Invoice';
+      targetPoNumber = data.invoiceNumber.trim();
+    }
+
+    setHasManuallyEditedReference(false);
+    onChange({
+      customerAddress: cleanAddress,
+      referenceType: targetRefType,
+      referenceName: targetRefName,
+      poInvoiceType: targetPoInvoiceType,
+      poNumber: targetPoNumber,
+    });
+
+    setErrors((prev) => ({
+      ...prev,
+      customerAddress: undefined,
+      referenceName: undefined,
+      poNumber: undefined,
+    }));
+
+    if (successMsg) {
+      showAiSuccessToast(successMsg);
+    }
+  };
 
   const customerAddressRef = useRef<HTMLTextAreaElement>(null);
   const firstItemInputRef = useRef<HTMLInputElement>(null);
@@ -168,7 +247,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
     scrollToAndFocusField(firstInvalid);
   };
 
-  const handleSelectCustomer = (item: IndexedCustomerRecord) => {
+  const handleSelectCustomer = async (item: IndexedCustomerRecord) => {
     const { record } = item;
     setSelectedCustomer(record);
 
@@ -227,6 +306,36 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       referenceName: undefined,
       poNumber: undefined,
     }));
+
+    // Smart AI Auto-Extract on Dropdown Selection:
+    // Check if the selected record has raw/unstructured email content
+    if (isUnstructuredCustomerRecord(record)) {
+      setIsAiExtractingDropdown(true);
+      try {
+        const bodyParts = [
+          record.customerName,
+          record.companyName,
+          record.projectName,
+          record.locationAddress,
+          record.poNumber,
+          record.invoiceNumber,
+        ].filter(Boolean);
+
+        const extracted = await parseCustomerWithAi({
+          subject: record.emailSubject?.trim() || undefined,
+          bodyText: bodyParts.join('\n') || undefined,
+        });
+
+        applyExtractedDetails(
+          extracted,
+          '✨ Address & PO details automatically extracted with AI'
+        );
+      } catch {
+        // If the API call fails or is unavailable, fail silently and keep the already-populated fallback fields intact
+      } finally {
+        setIsAiExtractingDropdown(false);
+      }
+    }
   };
 
   const handleSelectLetterType = (type: 'declaration' | 'po_certificate') => {
@@ -521,19 +630,70 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
         {/* STEP 2: CUSTOMER ADDRESS WITH AUTO-SUGGEST                    */}
         {/* ============================================================ */}
         <div>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-              <User className="w-5 h-5 stroke-[2.2]" />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <User className="w-5 h-5 stroke-[2.2]" />
+              </div>
+              <div>
+                <label htmlFor="customerAddress" className="block text-sm font-bold text-slate-800">
+                  Customer Address <span className="text-red-500">*</span>
+                </label>
+                <p className="text-xs text-slate-500">
+                  Type SNo (#1, 1), name, PO/Invoice, or address to search customer database (or enter manually)
+                </p>
+              </div>
             </div>
-            <div>
-              <label htmlFor="customerAddress" className="block text-sm font-bold text-slate-800">
-                Customer Address <span className="text-red-500">*</span>
-              </label>
-              <p className="text-xs text-slate-500">
-                Type SNo (#1, 1), name, PO/Invoice, or address to search customer database (or enter manually)
-              </p>
-            </div>
+
+            {/* Compact AI Paste Button */}
+            <button
+              type="button"
+              onClick={() => setIsAiBoxOpen((prev) => !prev)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl border transition-all cursor-pointer shadow-2xs self-start sm:self-auto select-none ${
+                isAiBoxOpen
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-blue-500/20'
+                  : 'bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 hover:text-blue-800 border-blue-200/90 hover:border-blue-300 hover:bg-blue-100/70'
+              }`}
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${isAiBoxOpen ? 'text-white' : 'text-blue-600'}`} />
+              <span>{isAiBoxOpen ? 'Close AI Extractor' : '✨ Paste Email / Image'}</span>
+            </button>
           </div>
+
+          {/* AI Extractor Collapsible Box */}
+          <AiCustomerExtractor
+            isOpen={isAiBoxOpen}
+            onClose={() => setIsAiBoxOpen(false)}
+            onSuccess={(data) => {
+              applyExtractedDetails(data, '✨ Details extracted & auto-filled from email/screenshot!');
+            }}
+          />
+
+          {/* Inline Loading Indicator for Dropdown AI extraction */}
+          {isAiExtractingDropdown && (
+            <div className="flex items-center gap-2 px-3.5 py-2 mb-2 bg-blue-50/90 border border-blue-200/80 rounded-xl text-xs font-semibold text-blue-700 animate-pulse shadow-2xs">
+              <Sparkles className="w-3.5 h-3.5 text-blue-600 animate-spin shrink-0" />
+              <span>✨ Extracting clean address &amp; PO details...</span>
+            </div>
+          )}
+
+          {/* Success Banner */}
+          {aiSuccessMessage && !isAiBoxOpen && (
+            <div className="flex items-center justify-between px-3.5 py-2 mb-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-semibold text-emerald-800 animate-fadeIn shadow-2xs">
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                {aiSuccessMessage}
+              </span>
+              <button
+                type="button"
+                onClick={() => setAiSuccessMessage(null)}
+                className="text-emerald-700 hover:text-emerald-900 text-xs font-bold ml-2 cursor-pointer"
+                title="Dismiss"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           <CustomerAutocomplete
             inputRef={customerAddressRef}

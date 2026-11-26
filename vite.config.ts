@@ -20,6 +20,17 @@ function customerApiPlugin(): Plugin {
           }
           return;
         }
+        if (url === '/api/parse-customer' || url.startsWith('/api/parse-customer?')) {
+          try {
+            const { default: handler } = await import('./api/parse-customer');
+            await handler(req, res);
+          } catch (e: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: e?.message || 'Server error' }));
+          }
+          return;
+        }
         next();
       });
     },

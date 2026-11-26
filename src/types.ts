@@ -81,3 +81,17 @@ export interface WarrantyTableRow {
   productBrand?: string;
   productType?: string;
 }
+
+export interface ParsedCustomerDetails {
+  customerName: string;
+  designation: string;
+  companyName: string;
+  projectName: string;
+  locationAddress: string;
+  poNumber: string;
+  invoiceNumber: string;
+  refType: 'PO' | 'Invoice' | '';
+  refNumber: string;
+  formattedAddressBlock: string;
+}
+
