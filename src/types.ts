@@ -24,6 +24,10 @@ export interface ProductItemRow {
   // Column 3: Warranty Period
   warrantyPeriod?: string; // e.g. "5 Years"
 
+  // Order quantity & catalog match indicator
+  qty?: string;
+  isUnmatched?: boolean;
+
   // Backward compatibility
   productType?: string;
 }
@@ -82,16 +86,39 @@ export interface WarrantyTableRow {
   productType?: string;
 }
 
+export interface ParsedOrderItem {
+  itemCode: string;
+  description: string;
+  qty: string;
+}
+
+export interface ParsedOrder {
+  customerName: string;
+  designation: string;
+  companyName: string;
+  projectName: string;
+  customerAddress: string;
+  poNumber: string;
+  invoiceNumber: string;
+  date: string;
+  items: ParsedOrderItem[];
+}
+
 export interface ParsedCustomerDetails {
   customerName: string;
   designation: string;
   companyName: string;
   projectName: string;
   locationAddress: string;
+  customerAddress?: string;
   poNumber: string;
   invoiceNumber: string;
   refType: 'PO' | 'Invoice' | '';
   refNumber: string;
   formattedAddressBlock: string;
+  date?: string;
+  items?: ParsedOrderItem[];
+  orders?: ParsedOrder[];
 }
+
 

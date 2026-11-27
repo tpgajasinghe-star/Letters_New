@@ -204,6 +204,11 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
                         </span>
                       )}
                       <span className="text-xs font-bold text-slate-900 truncate">{entry.primaryName}</span>
+                      {entry.orders && entry.orders.length > 1 && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200/80 shrink-0">
+                          {entry.orders.length} Orders
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {refBadge && (

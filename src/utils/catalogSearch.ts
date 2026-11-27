@@ -125,3 +125,102 @@ export function filterAndRankCatalog(
   ranked.sort((a, b) => a.rank - b.rank || a.index - b.index);
   return ranked.map((r) => r.entry);
 }
+
+/**
+ * Matches an extracted order item against the item catalog:
+ * 1. Exact match on itemCode (case-insensitive and punctuation-normalized)
+ * 2. Fallback partial/token match on description
+ * 3. Fallback to generic warranty rules or unmatched indicator
+ */
+export function matchOrderItemToCatalog(
+  orderItem: { itemCode?: string; description?: string; qty?: string },
+  catalog: IndexedCatalogItem[]
+): {
+  matched: boolean;
+  itemCode: string;
+  description: string;
+  productBrand: string;
+  warrantyPeriod: string;
+} {
+  const rawCode = (orderItem.itemCode || '').trim();
+  const rawCodeLower = rawCode.toLowerCase();
+  const cleanCode = rawCodeLower.replace(/[^a-z0-9]/g, '');
+
+  const rawDesc = (orderItem.description || '').trim();
+  const descLower = rawDesc.toLowerCase();
+
+  // 1. Try matching by itemCode first (exact or normalized)
+  if (rawCodeLower) {
+    const foundByCode = catalog.find((c) => {
+      if (c.codeLower === rawCodeLower) return true;
+      if (cleanCode && c.codeLower.replace(/[^a-z0-9]/g, '') === cleanCode) return true;
+      return false;
+    });
+
+    if (foundByCode) {
+      return {
+        matched: true,
+        itemCode: foundByCode.item.itemCode,
+        description: foundByCode.combinedDisplay,
+        productBrand: foundByCode.match.productBrand,
+        warrantyPeriod: foundByCode.match.warrantyPeriod,
+      };
+    }
+  }
+
+  // 2. Try matching by description
+  if (rawDesc) {
+    const foundByDesc = catalog.find((c) => {
+      if (c.nameLower === descLower || c.combinedLower === descLower) return true;
+      if (c.codeLower && descLower.includes(c.codeLower)) return true;
+      if (c.nameLower && (descLower.includes(c.nameLower) || c.nameLower.includes(descLower))) return true;
+      return false;
+    });
+
+    if (foundByDesc) {
+      return {
+        matched: true,
+        itemCode: foundByDesc.item.itemCode,
+        description: foundByDesc.combinedDisplay,
+        productBrand: foundByDesc.match.productBrand,
+        warrantyPeriod: foundByDesc.match.warrantyPeriod,
+      };
+    }
+
+    // Try warranty rule pattern matching on raw description
+    const warrantyMatch = getProductWarrantyInfo({
+      itemCode: rawCode,
+      itemName: rawDesc,
+      category: '',
+      subCategory: '',
+    });
+
+    if (warrantyMatch.productBrand && warrantyMatch.warrantyPeriod) {
+      return {
+        matched: true,
+        itemCode: rawCode,
+        description:
+          rawCode && rawDesc && !rawDesc.toLowerCase().startsWith(rawCode.toLowerCase())
+            ? `${rawCode} - ${rawDesc}`
+            : rawDesc || rawCode,
+        productBrand: warrantyMatch.productBrand,
+        warrantyPeriod: warrantyMatch.warrantyPeriod,
+      };
+    }
+  }
+
+  // 3. Fallback: unmatched item
+  const fallbackDesc =
+    rawCode && rawDesc && !rawDesc.toLowerCase().startsWith(rawCode.toLowerCase())
+      ? `${rawCode} - ${rawDesc}`
+      : rawDesc || rawCode || 'Unmatched Product';
+
+  return {
+    matched: false,
+    itemCode: rawCode,
+    description: fallbackDesc,
+    productBrand: 'Wiring Devices',
+    warrantyPeriod: '1 Year',
+  };
+}
+

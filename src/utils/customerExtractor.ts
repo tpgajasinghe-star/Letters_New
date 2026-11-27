@@ -2,6 +2,8 @@ import { CustomerRecord } from './customerSearch';
 import { ParsedCustomerDetails } from '../types';
 
 export interface ParseCustomerPayload {
+  text?: string;
+  files?: Array<{ name: string; mimeType: string; base64: string }>;
   subject?: string;
   bodyText?: string;
   imageBase64?: string;

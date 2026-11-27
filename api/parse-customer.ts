@@ -1,23 +1,55 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 
+export interface ParseCustomerFileInput {
+  name: string;
+  mimeType: string;
+  base64: string;
+}
+
 export interface ParseCustomerRequestBody {
+  text?: string;
+  files?: ParseCustomerFileInput[];
+  // Backwards compatibility with previous payload:
   subject?: string;
   bodyText?: string;
   imageBase64?: string;
   imageMimeType?: string;
 }
 
-export interface ParsedCustomerDetails {
+export interface ParsedOrderItem {
+  itemCode: string;
+  description: string;
+  qty: string;
+}
+
+export interface ParsedOrder {
   customerName: string;
   designation: string;
   companyName: string;
   projectName: string;
-  locationAddress: string;
+  customerAddress: string;
   poNumber: string;
   invoiceNumber: string;
-  refType: 'PO' | 'Invoice' | '';
-  refNumber: string;
-  formattedAddressBlock: string;
+  date: string;
+  items: ParsedOrderItem[];
+}
+
+export interface ParseCustomerApiResponse {
+  orders: ParsedOrder[];
+  // Backwards compatibility properties from primary order
+  customerName?: string;
+  designation?: string;
+  companyName?: string;
+  projectName?: string;
+  customerAddress?: string;
+  locationAddress?: string;
+  poNumber?: string;
+  invoiceNumber?: string;
+  date?: string;
+  items?: ParsedOrderItem[];
+  refType?: 'PO' | 'Invoice' | '';
+  refNumber?: string;
+  formattedAddressBlock?: string;
 }
 
 interface ApiResponse extends ServerResponse {
@@ -26,7 +58,10 @@ interface ApiResponse extends ServerResponse {
 }
 
 function respond(res: ApiResponse, statusCode: number, data: unknown) {
-  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
   const resWithHelpers = res as {
     status?: (code: number) => { json?: (body: unknown) => void };
     json?: (body: unknown) => void;
@@ -46,7 +81,6 @@ function respond(res: ApiResponse, statusCode: number, data: unknown) {
 }
 
 async function parseRequestBody(req: IncomingMessage): Promise<ParseCustomerRequestBody> {
-  // If req.body is already parsed (e.g. by Vercel serverless runtime or body-parser middleware)
   const reqAny = req as { body?: unknown };
   if (reqAny.body) {
     if (typeof reqAny.body === 'string') {
@@ -61,7 +95,6 @@ async function parseRequestBody(req: IncomingMessage): Promise<ParseCustomerRequ
     }
   }
 
-  // Otherwise, buffer stream chunks from IncomingMessage
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk) => {
@@ -82,48 +115,84 @@ async function parseRequestBody(req: IncomingMessage): Promise<ParseCustomerRequ
   });
 }
 
-const EXTRACTION_INSTRUCTION = `You are an expert AI data extraction assistant for Kevilton Electrical Products warranty certificate issuance.
-Your job is to analyze the provided email subject, email body, and/or attached screenshot (which may be an email thread, purchase order, quotation request, RFQ, or delivery slip) and extract warranty letter recipient details regardless of where they appear.
+const EXTRACTION_INSTRUCTION = `You are an expert AI data extraction assistant for Kevilton Electrical Products (Pvt) Ltd warranty certificate issuance.
+Your job is to analyze the provided text and/or attached files (emails, Purchase Orders, Tax Invoices, Delivery Slips, RFQs, PDF documents, or screenshots) and extract warranty customer and order details.
 
-EXTRACTION GUIDELINES:
-- Identify the external client, contractor, company, buyer, or project receiving the warranty.
-- Focus strictly on the entity receiving the warranty.
-- IGNORE greetings, sign-offs, sender's own signature/phone/disclaimers, Kevilton sales rep signatures, and unrelated replies.
-- Extract the following fields:
-  1. customerName: Contact person or customer name (e.g. "Mr. Sunil Perera", "Eng. Samantha Silva", "Kamal Fernando") or "" if not mentioned.
-  2. designation: Job title or designation of the contact person (e.g. "Project Manager", "Senior Electrical Engineer", "Director", "Procurement Manager") or "" if not mentioned.
-  3. companyName: The name of the company, contractor, or client purchasing or receiving the warranty (e.g. "SP Lanka Engineering (Pvt) Ltd", "Maga Engineering (Pvt) Ltd") or "" if not mentioned.
-  4. projectName: Specific project name or site location if mentioned (e.g. "Prime Grand Residencies - Colombo 07", "Luxury Villa Project - Wadduwa") or "" if not mentioned.
-  5. locationAddress: Physical or postal address of the recipient company/site/customer (street, city, etc.) or "" if not mentioned. Do NOT include person name or company name in locationAddress if they belong in their respective fields.
-  6. poNumber: Purchase order number if mentioned (e.g. "PO-2024-9981", "SPL/PO/882", "PO#45019") or "" if not mentioned.
-  7. invoiceNumber: Invoice number if mentioned (e.g. "INV-4521", "2024-1102") or "" if not mentioned.
-  8. refType: "PO" if a purchase order number is identified; "Invoice" if an invoice number is identified (and no PO); otherwise "".
-  9. refNumber: The identified reference number (poNumber if present, else invoiceNumber, else "").
-  10. formattedAddressBlock: Formatted multi-line address block as it would be printed in the recipient block of an official warranty certificate, in this standard order:
-      Line 1: Customer Name (with title if available)
-      Line 2: Designation (if available)
-      Line 3: Company Name (if available)
-      Line 4: Project Name (if available)
-      Line 5+: Location Address lines (each on its own line if multi-line)
-      Do not include empty lines.
+CRITICAL EXTRACTION RULES:
+1. SELLER IDENTITY: Kevilton Electrical Products (Pvt) Ltd is the SELLER/SUPPLIER/WARRANTOR. NEVER extract "Kevilton Electrical Products (Pvt) Ltd", "Kevilton", or any Kevilton staff/offices as the customer or buyer!
+2. BUYER / CUSTOMER IDENTITY: Extract the EXTERNAL client, buyer, contractor, or project entity purchasing or receiving the products.
+3. MULTIPLE ORDERS & MERGING:
+   - If multiple distinct Purchase Orders (POs) or Invoices are present, return a separate order object in the "orders" array for each distinct order.
+   - If a Purchase Order (PO) and a Tax Invoice share the same PO number (or refer to the same order transaction), MERGE them into ONE single order object.
+   - When merging a PO and a Tax Invoice, PREFER the Tax Invoice item codes, descriptions, and quantities.
+4. ORDER FIELDS:
+   Each order must contain:
+   - customerName: Contact person / recipient name (e.g. "Mr. Sunil Perera") or "" if not mentioned.
+   - designation: Job title or designation (e.g. "Project Manager", "Senior Electrical Engineer") or "" if not mentioned.
+   - companyName: Company, contractor, or firm name (e.g. "SP Lanka Engineering (Pvt) Ltd") or "" if not mentioned.
+   - projectName: Specific project name, building, or site location (e.g. "Prime Grand Residencies - Colombo 07") or "" if not mentioned.
+   - customerAddress: Multi-line physical/postal address of the customer / site (street, city, etc.). Do NOT include greetings, email sign-offs, or company name if already in companyName.
+   - poNumber: Purchase order number (e.g. "PO-2024-9981") or "" if not mentioned.
+   - invoiceNumber: Invoice or Tax Invoice number (e.g. "INV-4521") or "" if not mentioned.
+   - date: Document date in YYYY-MM-DD or DD/MM/YYYY format or "" if not mentioned.
+   - items: Array of ordered/invoiced items, each with:
+     - itemCode: Specific item or catalog code (e.g. "KEV-SW-101") or "" if not specified.
+     - description: Product description or item name (e.g. "1 Gang 1 Way Switch 10A White").
+     - qty: Quantity ordered or invoiced (e.g. "50", "100 Nos") or "".
 
 OUTPUT FORMAT:
-Return a single JSON object with these exact keys:
+Return ONLY a valid JSON object matching this schema:
 {
-  "customerName": string,
-  "designation": string,
-  "companyName": string,
-  "projectName": string,
-  "locationAddress": string,
-  "poNumber": string,
-  "invoiceNumber": string,
-  "refType": "PO" | "Invoice" | "",
-  "refNumber": string,
-  "formattedAddressBlock": string
+  "orders": [
+    {
+      "customerName": string,
+      "designation": string,
+      "companyName": string,
+      "projectName": string,
+      "customerAddress": string,
+      "poNumber": string,
+      "invoiceNumber": string,
+      "date": string,
+      "items": [
+        {
+          "itemCode": string,
+          "description": string,
+          "qty": string
+        }
+      ]
+    }
+  ]
 }`;
 
+/**
+ * Executes fetch to Gemini REST API with 1 automatic retry after 2 seconds for 503 or 429
+ */
+async function callGeminiWithRetry(url: string, payload: unknown): Promise<Response> {
+  let response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  // Handle 503 (Service Unavailable) or 429 (Too Many Requests) with 1 automatic retry after 2 seconds
+  if (response.status === 503 || response.status === 429) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  return response;
+}
+
 export default async function handler(req: IncomingMessage, res: ApiResponse) {
-  // Handle CORS preflight if called cross-origin
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -142,53 +211,70 @@ export default async function handler(req: IncomingMessage, res: ApiResponse) {
     return respond(res, 500, { error: 'GEMINI_API_KEY is not configured' });
   }
 
-  // 2. Resolve model name
-  const model = (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
+  // 2. Resolve model name: defaults to gemini-3.8-flash as requested
+  const model = (process.env.GEMINI_MODEL || 'gemini-3.8-flash').trim();
 
   try {
-    // 3. Parse input body
+    // 3. Parse input body supporting both text & files and legacy payload
     const body = await parseRequestBody(req);
-    const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
-    const bodyText = typeof body.bodyText === 'string' ? body.bodyText.trim() : '';
-    const imageBase64 = typeof body.imageBase64 === 'string' ? body.imageBase64.trim() : '';
-    const imageMimeType = typeof body.imageMimeType === 'string' && body.imageMimeType.trim()
-      ? body.imageMimeType.trim()
-      : 'image/png';
 
-    if (!subject && !bodyText && !imageBase64) {
-      return respond(res, 400, {
-        error: 'Please provide email text (subject/body) or an image to extract customer details.',
+    // Resolve text
+    let text = typeof body.text === 'string' ? body.text.trim() : '';
+    if (!text) {
+      const sub = typeof body.subject === 'string' ? body.subject.trim() : '';
+      const bText = typeof body.bodyText === 'string' ? body.bodyText.trim() : '';
+      if (sub && bText) text = `Subject: ${sub}\n\n${bText}`;
+      else if (sub) text = `Subject: ${sub}`;
+      else if (bText) text = bText;
+    }
+
+    // Resolve files (supporting plain text, images PNG/JPEG/WEBP, and PDF files)
+    const files: ParseCustomerFileInput[] = [];
+    if (Array.isArray(body.files)) {
+      for (const f of body.files) {
+        if (f && typeof f.base64 === 'string' && f.base64.trim()) {
+          files.push({
+            name: typeof f.name === 'string' ? f.name : 'file',
+            mimeType: typeof f.mimeType === 'string' && f.mimeType ? f.mimeType.trim() : 'application/pdf',
+            base64: f.base64.replace(/^data:[^;]+;base64,/, '').trim(),
+          });
+        }
+      }
+    } else if (body.imageBase64 && typeof body.imageBase64 === 'string') {
+      files.push({
+        name: 'image.png',
+        mimeType: typeof body.imageMimeType === 'string' && body.imageMimeType ? body.imageMimeType.trim() : 'image/png',
+        base64: body.imageBase64.replace(/^data:[^;]+;base64,/, '').trim(),
       });
     }
 
-    // 4. Build parts
+    if (!text && files.length === 0) {
+      return respond(res, 400, {
+        error: 'Please provide text or files to parse.',
+      });
+    }
+
+    // 4. Build Gemini parts
     const parts: Array<Record<string, unknown>> = [
       { text: EXTRACTION_INSTRUCTION },
     ];
 
-    let emailTextContent = '';
-    if (subject) {
-      emailTextContent += `Email Subject: ${subject}\n\n`;
-    }
-    if (bodyText) {
-      emailTextContent += `Email Body / Unstructured Text:\n${bodyText}\n\n`;
-    }
-    if (emailTextContent) {
-      parts.push({ text: emailTextContent.trim() });
+    if (text) {
+      parts.push({
+        text: `Input Document / Email Text:\n${text}`,
+      });
     }
 
-    if (imageBase64) {
-      // Strip any data:...;base64, prefix
-      const cleanBase64 = imageBase64.replace(/^data:[^;]+;base64,/, '').trim();
+    for (const file of files) {
       parts.push({
         inline_data: {
-          mime_type: imageMimeType,
-          data: cleanBase64,
+          mime_type: file.mimeType,
+          data: file.base64,
         },
       });
     }
 
-    // 5. Call Gemini REST API using native fetch
+    // 5. Call Gemini REST API using model gemini-3.8-flash with retry
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
     const geminiPayload = {
@@ -204,13 +290,7 @@ export default async function handler(req: IncomingMessage, res: ApiResponse) {
       },
     };
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(geminiPayload),
-    });
+    const response = await callGeminiWithRetry(url, geminiPayload);
 
     if (!response.ok) {
       let errDetails = `HTTP ${response.status} ${response.statusText}`;
@@ -220,9 +300,11 @@ export default async function handler(req: IncomingMessage, res: ApiResponse) {
           errDetails = errJson.error.message;
         }
       } catch {
-        // use status text
+        // fallback to status text
       }
-      return respond(res, 500, { error: `Gemini API error: ${errDetails}` });
+      return respond(res, response.status >= 400 && response.status < 600 ? response.status : 500, {
+        error: `Gemini API error: ${errDetails}`,
+      });
     }
 
     const geminiResponse = await response.json();
@@ -253,68 +335,100 @@ export default async function handler(req: IncomingMessage, res: ApiResponse) {
       });
     }
 
-    // 7. Normalize fields according to expected schema
-    const customerName = typeof parsed.customerName === 'string' ? parsed.customerName.trim() : '';
-    const designation = typeof parsed.designation === 'string' ? parsed.designation.trim() : '';
-    const companyName = typeof parsed.companyName === 'string' ? parsed.companyName.trim() : '';
-    const projectName = typeof parsed.projectName === 'string' ? parsed.projectName.trim() : '';
-    const locationAddress = typeof parsed.locationAddress === 'string' ? parsed.locationAddress.trim() : '';
-    const poNumber = typeof parsed.poNumber === 'string' ? parsed.poNumber.trim() : '';
-    const invoiceNumber = typeof parsed.invoiceNumber === 'string' ? parsed.invoiceNumber.trim() : '';
-
-    let refType: 'PO' | 'Invoice' | '' = '';
-    if (parsed.refType === 'PO' || parsed.refType === 'Invoice') {
-      refType = parsed.refType;
-    } else if (poNumber) {
-      refType = 'PO';
-    } else if (invoiceNumber) {
-      refType = 'Invoice';
+    // 7. Normalize parsed orders array
+    let rawOrders: unknown[] = [];
+    if (Array.isArray(parsed.orders)) {
+      rawOrders = parsed.orders;
+    } else if (Array.isArray(parsed)) {
+      rawOrders = parsed;
+    } else if (parsed && typeof parsed === 'object') {
+      rawOrders = [parsed];
     }
 
-    const refNumber =
-      typeof parsed.refNumber === 'string' && parsed.refNumber.trim()
-        ? parsed.refNumber.trim()
-        : poNumber || invoiceNumber || '';
+    const normalizedOrders: ParsedOrder[] = rawOrders.map((rawOrder: any) => {
+      const customerName = typeof rawOrder?.customerName === 'string' ? rawOrder.customerName.trim() : '';
+      const designation = typeof rawOrder?.designation === 'string' ? rawOrder.designation.trim() : '';
+      const companyName = typeof rawOrder?.companyName === 'string' ? rawOrder.companyName.trim() : '';
+      const projectName = typeof rawOrder?.projectName === 'string' ? rawOrder.projectName.trim() : '';
+      const customerAddress = typeof rawOrder?.customerAddress === 'string'
+        ? rawOrder.customerAddress.trim()
+        : (typeof rawOrder?.locationAddress === 'string' ? rawOrder.locationAddress.trim() : '');
+      const poNumber = typeof rawOrder?.poNumber === 'string' ? rawOrder.poNumber.trim() : '';
+      const invoiceNumber = typeof rawOrder?.invoiceNumber === 'string' ? rawOrder.invoiceNumber.trim() : '';
+      const date = typeof rawOrder?.date === 'string' ? rawOrder.date.trim() : '';
 
-    let formattedAddressBlock =
-      typeof parsed.formattedAddressBlock === 'string'
-        ? parsed.formattedAddressBlock.trim()
-        : '';
+      const rawItems = Array.isArray(rawOrder?.items) ? rawOrder.items : [];
+      const items: ParsedOrderItem[] = rawItems.map((item: any) => ({
+        itemCode: typeof item?.itemCode === 'string' ? item.itemCode.trim() : '',
+        description: typeof item?.description === 'string' ? item.description.trim() : '',
+        qty: typeof item?.qty === 'string' ? item.qty.trim() : (item?.qty != null ? String(item.qty).trim() : ''),
+      }));
 
-    // Compute fallback formattedAddressBlock if empty
-    if (!formattedAddressBlock) {
-      const blockLines: string[] = [];
-      if (customerName) blockLines.push(customerName);
-      if (designation) blockLines.push(designation);
-      if (companyName) blockLines.push(companyName);
-      if (projectName) blockLines.push(projectName);
-      if (locationAddress) {
-        const addrLines = locationAddress
-          .split('\n')
-          .map((l) => l.trim())
-          .filter(Boolean);
-        blockLines.push(...addrLines);
-      }
-      formattedAddressBlock = blockLines.join('\n');
+      return {
+        customerName,
+        designation,
+        companyName,
+        projectName,
+        customerAddress,
+        poNumber,
+        invoiceNumber,
+        date,
+        items,
+      };
+    });
+
+    // 8. Construct response with orders array and backwards-compatible primary order fields
+    const primaryOrder = normalizedOrders[0] || {
+      customerName: '',
+      designation: '',
+      companyName: '',
+      projectName: '',
+      customerAddress: '',
+      poNumber: '',
+      invoiceNumber: '',
+      date: '',
+      items: [],
+    };
+
+    const blockLines: string[] = [];
+    if (primaryOrder.customerName) blockLines.push(primaryOrder.customerName);
+    if (primaryOrder.designation) blockLines.push(primaryOrder.designation);
+    if (primaryOrder.companyName) blockLines.push(primaryOrder.companyName);
+    if (primaryOrder.projectName) blockLines.push(primaryOrder.projectName);
+    if (primaryOrder.customerAddress) {
+      const addrLines = primaryOrder.customerAddress
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      blockLines.push(...addrLines);
     }
+    const formattedAddressBlock = blockLines.join('\n');
 
-    const result: ParsedCustomerDetails = {
-      customerName,
-      designation,
-      companyName,
-      projectName,
-      locationAddress,
-      poNumber,
-      invoiceNumber,
+    const refType: 'PO' | 'Invoice' | '' = primaryOrder.poNumber
+      ? 'PO'
+      : (primaryOrder.invoiceNumber ? 'Invoice' : '');
+    const refNumber = primaryOrder.poNumber || primaryOrder.invoiceNumber || '';
+
+    const responsePayload: ParseCustomerApiResponse = {
+      orders: normalizedOrders,
+      customerName: primaryOrder.customerName,
+      designation: primaryOrder.designation,
+      companyName: primaryOrder.companyName,
+      projectName: primaryOrder.projectName,
+      customerAddress: primaryOrder.customerAddress,
+      locationAddress: primaryOrder.customerAddress,
+      poNumber: primaryOrder.poNumber,
+      invoiceNumber: primaryOrder.invoiceNumber,
+      date: primaryOrder.date,
+      items: primaryOrder.items,
       refType,
       refNumber,
       formattedAddressBlock,
     };
 
-    return respond(res, 200, result);
+    return respond(res, 200, responsePayload);
   } catch (err: unknown) {
-    const message =
-      err instanceof Error ? err.message : 'Unknown error during customer parsing';
+    const message = err instanceof Error ? err.message : 'Unknown error during customer parsing';
     return respond(res, 500, { error: message });
   }
 }

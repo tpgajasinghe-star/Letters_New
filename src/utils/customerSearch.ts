@@ -1,21 +1,34 @@
+export interface CustomerRecordItem {
+  itemCode: string;
+  description: string;
+  qty: string;
+}
+
 export interface CustomerRecord {
   sno?: string;
   date?: string;
   customerName?: string;
+  designation?: string;
   companyName?: string;
   projectName?: string;
+  customerAddress?: string;
   locationAddress: string;
   poNumber?: string;
   invoiceNumber?: string;
   refType?: 'PO' | 'Invoice' | '';
   refNumber?: string;
   emailSubject?: string;
+  items?: CustomerRecordItem[];
+  mailGroupId?: string;
   allValues?: string;
   searchText?: string;
 }
 
 export interface IndexedCustomerRecord {
   record: CustomerRecord;
+  orders: CustomerRecord[];
+  mailGroupId?: string;
+  orderCount: number;
   sno: string;
   snoNormalized: string;
   dateStr: string;
@@ -47,6 +60,12 @@ export function getCachedCustomers(): IndexedCustomerRecord[] {
  */
 export function shouldTriggerCustomerSearch(rawQuery: string): boolean {
   return rawQuery.trim().length >= 1;
+}
+
+export function refreshCustomerRecords(): Promise<IndexedCustomerRecord[]> {
+  cachedCustomers = null;
+  customersFetchPromise = null;
+  return loadCustomerRecords();
 }
 
 export function loadCustomerRecords(): Promise<IndexedCustomerRecord[]> {
@@ -87,7 +106,8 @@ export function loadCustomerRecords(): Promise<IndexedCustomerRecord[]> {
           return [];
         }
 
-        const indexed: IndexedCustomerRecord[] = [];
+        // 1. Parse each row into a CustomerRecord
+        const parsedRows: CustomerRecord[] = [];
         for (let idx = 0; idx < rawList.length; idx++) {
           const entry = rawList[idx];
           if (!entry || typeof entry !== 'object') continue;
@@ -115,36 +135,120 @@ export function loadCustomerRecords(): Promise<IndexedCustomerRecord[]> {
             continue;
           }
 
+          const designation = typeof rec.designation === 'string' ? rec.designation.trim() : '';
+          const customerAddress = typeof rec.customerAddress === 'string' ? rec.customerAddress.trim() : locationAddress;
           const poNumber = typeof rec.poNumber === 'string' ? rec.poNumber.trim() : '';
           const invoiceNumber = typeof rec.invoiceNumber === 'string' ? rec.invoiceNumber.trim() : '';
           const refType = rec.refType === 'Invoice' ? 'Invoice' : rec.refType === 'PO' ? 'PO' : (poNumber ? 'PO' : (invoiceNumber ? 'Invoice' : ''));
           const refNumber = typeof rec.refNumber === 'string' && rec.refNumber.trim() ? rec.refNumber.trim() : (poNumber || invoiceNumber || '');
           const emailSubject = typeof rec.emailSubject === 'string' ? rec.emailSubject.trim() : '';
           const date = typeof rec.date === 'string' ? rec.date.trim() : '';
+          const items = Array.isArray(rec.items) ? (rec.items as CustomerRecordItem[]) : [];
+          const mailGroupId = typeof rec.mailGroupId === 'string' ? rec.mailGroupId.trim() : '';
           const extraSearch = typeof rec.searchText === 'string' ? rec.searchText.trim() : (typeof rec.allValues === 'string' ? rec.allValues.trim() : '');
 
-          const snoNormalized = sno.replace(/^#/, '').trim().toLowerCase();
-          const primaryName = companyName || projectName || customerName || locationAddress || (sno ? `Customer #${sno}` : 'Customer');
-
-          // Collect all lowercase field values for starts-with matching
-          const fieldValuesLower = [
+          parsedRows.push({
             sno,
-            sno ? `#${sno}` : '',
+            date,
             customerName,
+            designation,
             companyName,
             projectName,
+            customerAddress,
             locationAddress,
             poNumber,
             invoiceNumber,
+            refType,
             refNumber,
             emailSubject,
-            date,
-            extraSearch,
-          ]
-            .filter(Boolean)
-            .map((val) => val.toLowerCase());
+            items,
+            mailGroupId,
+            allValues: extraSearch,
+            searchText: extraSearch,
+          });
+        }
 
-          // Extract all unique words across fields for 1-char word-boundary starts-with matching
+        // 2. Group cleanly by customer + mailGroupId (if mailGroupId is present)
+        // If mailGroupId is empty, each row remains a separate entry
+        const groupMap = new Map<string, CustomerRecord[]>();
+        const groupKeysOrder: string[] = [];
+
+        parsedRows.forEach((row, rowIdx) => {
+          const mg = (row.mailGroupId || '').trim().toLowerCase();
+          let groupKey: string;
+          if (mg) {
+            const customerKey = (
+              row.companyName ||
+              row.customerName ||
+              row.projectName ||
+              row.customerAddress ||
+              row.locationAddress
+            )
+              .trim()
+              .toLowerCase()
+              .replace(/[^a-z0-9]/g, '');
+            groupKey = `group:${customerKey || 'cust'}:::${mg}`;
+          } else {
+            groupKey = `single:${rowIdx}:${row.sno || ''}`;
+          }
+
+          if (!groupMap.has(groupKey)) {
+            groupMap.set(groupKey, []);
+            groupKeysOrder.push(groupKey);
+          }
+          groupMap.get(groupKey)!.push(row);
+        });
+
+        const indexed: IndexedCustomerRecord[] = [];
+
+        for (const gKey of groupKeysOrder) {
+          const orders = groupMap.get(gKey) || [];
+          if (orders.length === 0) continue;
+          const primary = orders[0];
+
+          const sno = primary.sno || '';
+          const snoNormalized = sno.replace(/^#/, '').trim().toLowerCase();
+          const primaryName =
+            primary.companyName ||
+            primary.projectName ||
+            primary.customerName ||
+            primary.customerAddress ||
+            primary.locationAddress ||
+            (sno ? `Customer #${sno}` : 'Customer');
+
+          // Collect all lowercase field values across ALL orders in this group
+          const fieldValuesSet = new Set<string>();
+          for (const ord of orders) {
+            const vals = [
+              ord.sno,
+              ord.sno ? `#${ord.sno}` : '',
+              ord.customerName,
+              ord.designation,
+              ord.companyName,
+              ord.projectName,
+              ord.locationAddress,
+              ord.customerAddress,
+              ord.poNumber,
+              ord.invoiceNumber,
+              ord.refNumber,
+              ord.emailSubject,
+              ord.mailGroupId,
+              ord.date,
+              ord.searchText,
+              ord.allValues,
+            ];
+            for (const v of vals) {
+              if (v) fieldValuesSet.add(v.toLowerCase().trim());
+            }
+            if (ord.items) {
+              for (const it of ord.items) {
+                if (it.itemCode) fieldValuesSet.add(it.itemCode.toLowerCase().trim());
+                if (it.description) fieldValuesSet.add(it.description.toLowerCase().trim());
+              }
+            }
+          }
+          const fieldValuesLower = Array.from(fieldValuesSet);
+
           const wordsSet = new Set<string>();
           for (const fv of fieldValuesLower) {
             const words = fv.split(/[\s,./#\-()_]+/).filter(Boolean);
@@ -153,36 +257,24 @@ export function loadCustomerRecords(): Promise<IndexedCustomerRecord[]> {
             }
           }
           const wordsLower = Array.from(wordsSet);
-
           const combinedSearchText = fieldValuesLower.join(' ');
 
           indexed.push({
-            record: {
-              sno,
-              date,
-              customerName,
-              companyName,
-              projectName,
-              locationAddress,
-              poNumber,
-              invoiceNumber,
-              refType,
-              refNumber,
-              emailSubject,
-              allValues: extraSearch,
-              searchText: extraSearch,
-            },
+            record: primary,
+            orders,
+            mailGroupId: primary.mailGroupId,
+            orderCount: orders.length,
             sno,
             snoNormalized,
-            dateStr: date || '1970-01-01',
-            customerNameLower: customerName.toLowerCase(),
-            companyNameLower: companyName.toLowerCase(),
-            projectLower: projectName.toLowerCase(),
-            addressLower: locationAddress.toLowerCase(),
-            poNumberLower: poNumber.toLowerCase(),
-            invoiceNumberLower: invoiceNumber.toLowerCase(),
-            refNumberLower: refNumber.toLowerCase(),
-            emailSubjectLower: emailSubject.toLowerCase(),
+            dateStr: primary.date || '1970-01-01',
+            customerNameLower: (primary.customerName || '').toLowerCase(),
+            companyNameLower: (primary.companyName || '').toLowerCase(),
+            projectLower: (primary.projectName || '').toLowerCase(),
+            addressLower: (primary.customerAddress || primary.locationAddress || '').toLowerCase(),
+            poNumberLower: (primary.poNumber || '').toLowerCase(),
+            invoiceNumberLower: (primary.invoiceNumber || '').toLowerCase(),
+            refNumberLower: (primary.refNumber || '').toLowerCase(),
+            emailSubjectLower: (primary.emailSubject || '').toLowerCase(),
             primaryName,
             combinedSearchText,
             fieldValuesLower,

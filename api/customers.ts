@@ -1,18 +1,28 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import * as XLSX from 'xlsx';
 
+export interface CustomerItem {
+  itemCode: string;
+  description: string;
+  qty: string;
+}
+
 export interface CustomerApiRecord {
   sno: string;
   date: string;
   customerName: string;
+  designation: string;
   companyName: string;
   projectName: string;
-  locationAddress: string;
+  customerAddress: string;
+  locationAddress: string; // backwards compatibility alias for customerAddress
   poNumber: string;
   invoiceNumber: string;
   refType: 'PO' | 'Invoice' | '';
   refNumber: string;
   emailSubject: string;
+  items: CustomerItem[];
+  mailGroupId: string;
   allValues: string;
   searchText: string;
 }
@@ -26,7 +36,10 @@ const DEFAULT_DOWNLOAD_URL =
   'https://drive.usercontent.google.com/download?id=1q4SI8H2wTT6rFvDsWXwt8YwWvCIdBRjq&export=download&confirm=t';
 
 function respond(res: ApiResponse, statusCode: number, data: unknown) {
-  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
   const resWithHelpers = res as {
     status?: (code: number) => { json?: (body: unknown) => void };
     json?: (body: unknown) => void;
@@ -63,14 +76,59 @@ function getField(row: Record<string, unknown>, ...candidateKeys: string[]): str
   return '';
 }
 
+/**
+ * Parses the Items column string format:
+ * `itemCode | description | qty ; itemCode | description | qty`
+ * into a structured array: Array<{ itemCode: string; description: string; qty: string }>
+ */
+export function parseItemsString(rawItems: string): CustomerItem[] {
+  if (!rawItems || typeof rawItems !== 'string') return [];
+  const trimmed = rawItems.trim();
+  if (!trimmed) return [];
+
+  // Split by ';' or newlines
+  const segments = trimmed
+    .split(/[;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const items: CustomerItem[] = [];
+
+  for (const segment of segments) {
+    const parts = segment.split('|').map((p) => p.trim());
+    if (parts.length >= 3) {
+      items.push({
+        itemCode: parts[0] || '',
+        description: parts[1] || '',
+        qty: parts[2] || '',
+      });
+    } else if (parts.length === 2) {
+      items.push({
+        itemCode: parts[0] || '',
+        description: parts[1] || '',
+        qty: '',
+      });
+    } else if (parts.length === 1 && parts[0]) {
+      items.push({
+        itemCode: '',
+        description: parts[0],
+        qty: '',
+      });
+    }
+  }
+
+  return items;
+}
+
 export default async function handler(req: IncomingMessage, res: ApiResponse) {
   // Support GET and HEAD requests
   if (req.method && req.method !== 'GET' && req.method !== 'HEAD') {
     return respond(res, 405, { error: 'Method not allowed' });
   }
 
-  // 1. Read download URL from environment variables or fallback
+  // 1. Read download URL from environment variables (preferring CUSTOMERS_EXCEL_URL)
   const downloadUrl = (
+    process.env.CUSTOMERS_EXCEL_URL ||
     process.env['https://drive.usercontent.google.com/download?id=1q4SI8H2wTT6rFvDsWXwt8YwWvCIdBRjq&export=download&confirm=t'] ||
     process.env.CUSTOMER_LIST_URL ||
     process.env.CUSTOMERS_URL ||
@@ -84,11 +142,17 @@ export default async function handler(req: IncomingMessage, res: ApiResponse) {
   }
 
   try {
-    // 2. Fetch the .xlsx file with a browser User-Agent header and follow redirects
-    const response = await fetch(downloadUrl, {
+    // Append timestamp query parameter to bypass intermediary/CDN caches
+    const separator = downloadUrl.includes('?') ? '&' : '?';
+    const fetchUrlWithTimestamp = `${downloadUrl}${separator}_t=${Date.now()}`;
+
+    // 2. Fetch the .xlsx file with a browser User-Agent header, no-store cache headers, and follow redirects
+    const response = await fetch(fetchUrlWithTimestamp, {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Cache-Control': 'no-cache, no-store',
+        Pragma: 'no-cache',
       },
       redirect: 'follow',
     });
@@ -126,21 +190,11 @@ export default async function handler(req: IncomingMessage, res: ApiResponse) {
       raw: false,
     });
 
-    // 6. Map each non-empty row to exact JSON structure expected by the frontend
+    // 6. Map all 12 columns for each non-empty row to exact JSON structure
     const records: CustomerApiRecord[] = [];
 
     for (let rowIndex = 0; rowIndex < rawRows.length; rowIndex++) {
       const row = rawRows[rowIndex];
-
-      const customerName = getField(row, 'Customer Name', 'customerName', 'Customer');
-      const companyName = getField(row, 'Company Name', 'companyName', 'Company');
-      const projectName = getField(row, 'Project Name', 'projectName', 'Project');
-      const locationAddress = getField(row, 'Customer Address', 'locationAddress', 'Address');
-
-      // Keep only rows where at least one of Customer Address, Company Name, Project Name, or Customer Name is non-empty
-      if (!locationAddress && !companyName && !projectName && !customerName) {
-        continue;
-      }
 
       // Customer SNo: handle formula (=ROW()-1) or fallback to 1-based index (rowIndex + 1)
       let rawSno = getField(
@@ -160,15 +214,38 @@ export default async function handler(req: IncomingMessage, res: ApiResponse) {
       }
       const sno = rawSno.trim();
 
-      const date = getField(row, 'Date', 'date');
-      const poNumber = getField(row, 'PO Number', 'poNumber', 'PO');
-      const invoiceNumber = getField(row, 'Invoice Number', 'invoiceNumber', 'Invoice');
+      const customerName = getField(row, 'Customer Name', 'customerName', 'Customer', 'Contact Person');
+      const designation = getField(row, 'Designation', 'designation', 'Title', 'Job Title');
+      const companyName = getField(row, 'Company Name', 'companyName', 'Company', 'Client');
+      const projectName = getField(row, 'Project Name', 'projectName', 'Project', 'Site');
+      const customerAddress = getField(row, 'Customer Address', 'customerAddress', 'Address', 'Location Address', 'locationAddress');
+      const poNumber = getField(row, 'PO Number', 'poNumber', 'PO', 'PO No', 'P.O. Number');
+      const invoiceNumber = getField(row, 'Invoice Number', 'invoiceNumber', 'Invoice', 'Invoice No', 'Inv No');
+      const date = getField(row, 'Date', 'date', 'Issue Date');
       const emailSubject = getField(row, 'Email Subject', 'emailSubject', 'Subject');
+      const rawItemsString = getField(row, 'Items', 'items', 'Item List', 'Products', 'Product Items');
+      const mailGroupId = getField(row, 'Mail Group ID', 'Mail Group Id', 'mailGroupId', 'MailGroupId', 'Mail Group');
+
+      // Keep only rows where at least one core identifying field is non-empty
+      if (
+        !customerAddress &&
+        !companyName &&
+        !projectName &&
+        !customerName &&
+        !poNumber &&
+        !invoiceNumber &&
+        !rawItemsString
+      ) {
+        continue;
+      }
+
+      // Parse items string format "itemCode | description | qty ; ..."
+      const items = parseItemsString(rawItemsString);
 
       const refType: 'PO' | 'Invoice' | '' = poNumber ? 'PO' : invoiceNumber ? 'Invoice' : '';
       const refNumber = poNumber || invoiceNumber || '';
 
-      // Combine ALL non-empty cell values from that row into allValues / searchText
+      // Combine ALL non-empty cell values from that row into allValues / searchText for searching
       const cellValues: string[] = [];
       if (sno) cellValues.push(sno);
 
@@ -181,6 +258,12 @@ export default async function handler(req: IncomingMessage, res: ApiResponse) {
         }
       }
 
+      // Ensure parsed item pieces are also searchable
+      for (const it of items) {
+        if (it.itemCode && !cellValues.includes(it.itemCode)) cellValues.push(it.itemCode);
+        if (it.description && !cellValues.includes(it.description)) cellValues.push(it.description);
+      }
+
       const allValues = cellValues.join(' ');
       const searchText = allValues;
 
@@ -188,14 +271,18 @@ export default async function handler(req: IncomingMessage, res: ApiResponse) {
         sno,
         date,
         customerName,
+        designation,
         companyName,
         projectName,
-        locationAddress,
+        customerAddress,
+        locationAddress: customerAddress, // backward compatibility alias
         poNumber,
         invoiceNumber,
         refType,
         refNumber,
         emailSubject,
+        items,
+        mailGroupId,
         allValues,
         searchText,
       });

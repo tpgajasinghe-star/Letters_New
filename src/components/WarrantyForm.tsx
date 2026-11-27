@@ -1,15 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileText, Building2, HelpCircle, CheckCircle2 } from 'lucide-react';
-import { WarrantyFormData, ProductItemRow, ReferenceTypeOption, PoInvoiceTypeOption, NoteOption, ParsedCustomerDetails } from '../types';
+import { User, Package, Calendar, Send, Sparkles, AlertCircle, RotateCcw, Plus, Trash2, FileText, Building2, HelpCircle, CheckCircle2, RefreshCw } from 'lucide-react';
+import { WarrantyFormData, ProductItemRow, ReferenceTypeOption, PoInvoiceTypeOption, NoteOption, ParsedCustomerDetails, ParsedOrder } from '../types';
 import { CatalogItem, CatalogMatch } from '../utils/warrantyRules';
-import { IndexedCatalogItem, getCachedCatalog, loadCatalogItems } from '../utils/catalogSearch';
-import { CustomerRecord, IndexedCustomerRecord, getCachedCustomers, loadCustomerRecords } from '../utils/customerSearch';
+import { IndexedCatalogItem, getCachedCatalog, loadCatalogItems, matchOrderItemToCatalog } from '../utils/catalogSearch';
+import { CustomerRecord, IndexedCustomerRecord, getCachedCustomers, loadCustomerRecords, refreshCustomerRecords, CustomerRecordItem } from '../utils/customerSearch';
 import { ProductDescriptionAutocomplete } from './ProductDescriptionAutocomplete';
 import { CustomerAutocomplete } from './CustomerAutocomplete';
-import { AiCustomerExtractor } from './AiCustomerExtractor';
+import { AiCustomerExtractor, AiExtractorResult } from './AiCustomerExtractor';
 import { parseCustomerAddress } from '../utils/templateParser';
 import { parseCustomerWithAi, isUnstructuredCustomerRecord } from '../utils/customerExtractor';
-
 
 interface WarrantyFormProps {
   formData: WarrantyFormData;
@@ -38,9 +37,13 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
   const [catalog, setCatalog] = useState<IndexedCatalogItem[]>(() => getCachedCatalog());
   const [customers, setCustomers] = useState<IndexedCustomerRecord[]>(() => getCachedCustomers());
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord | null>(null);
+  const [availableOrders, setAvailableOrders] = useState<CustomerRecord[]>([]);
+  const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(0);
+  const [activeOrderItems, setActiveOrderItems] = useState<CustomerRecordItem[]>([]);
   const [hasManuallyEditedReference, setHasManuallyEditedReference] = useState(false);
   const [isAiExtractingDropdown, setIsAiExtractingDropdown] = useState(false);
   const [isAiBoxOpen, setIsAiBoxOpen] = useState(false);
+  const [isRefreshingDb, setIsRefreshingDb] = useState(false);
   const [aiSuccessMessage, setAiSuccessMessage] = useState<string | null>(null);
   const successTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -247,11 +250,134 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
     scrollToAndFocusField(firstInvalid);
   };
 
-  const handleSelectCustomer = async (item: IndexedCustomerRecord) => {
-    const { record } = item;
-    setSelectedCustomer(record);
+  const handleRefreshDb = async () => {
+    setIsRefreshingDb(true);
+    try {
+      const freshCustomers = await refreshCustomerRecords();
+      setCustomers(freshCustomers);
+      showAiSuccessToast(`Customer database refreshed (${freshCustomers.length} records)`);
+    } catch {
+      // silent
+    } finally {
+      setIsRefreshingDb(false);
+    }
+  };
 
-    // 1. Populate Customer Address cleanly in order: customerName, companyName, projectName, locationAddress
+  const handleSelectOrder = (index: number) => {
+    setSelectedOrderIndex(index);
+    const ord = availableOrders[index];
+    if (!ord) return;
+
+    setActiveOrderItems(ord.items || []);
+
+    let targetPoInvoiceType: PoInvoiceTypeOption = poInvoiceType;
+    let targetPoNumber = formData.poNumber || '';
+
+    if (ord.poNumber?.trim()) {
+      targetPoInvoiceType = 'PO';
+      targetPoNumber = ord.poNumber.trim();
+    } else if (ord.invoiceNumber?.trim()) {
+      targetPoInvoiceType = 'Invoice';
+      targetPoNumber = ord.invoiceNumber.trim();
+    } else if (ord.refNumber?.trim()) {
+      targetPoNumber = ord.refNumber.trim();
+      if (ord.refType === 'Invoice' || ord.refType === 'PO') {
+        targetPoInvoiceType = ord.refType;
+      }
+    }
+
+    onChange({
+      poInvoiceType: targetPoInvoiceType,
+      poNumber: targetPoNumber,
+    });
+
+    if (errors.poNumber) {
+      setErrors((prev) => ({ ...prev, poNumber: undefined }));
+    }
+  };
+
+  const handleAutoFillItemsFromOrder = () => {
+    if (!activeOrderItems || activeOrderItems.length === 0) return;
+
+    const matchedRows: ProductItemRow[] = activeOrderItems.map((ordItem) => {
+      const matchResult = matchOrderItemToCatalog(ordItem, catalog);
+      return {
+        itemCode: matchResult.itemCode,
+        description: matchResult.description,
+        productBrand: matchResult.productBrand,
+        warrantyPeriod: matchResult.warrantyPeriod,
+        qty: ordItem.qty || '',
+        isUnmatched: !matchResult.matched,
+      };
+    });
+
+    onChange({ items: matchedRows });
+    if (errors.items) {
+      setErrors((prev) => ({ ...prev, items: undefined }));
+    }
+    showAiSuccessToast(`✨ Auto-filled ${matchedRows.length} items from order!`);
+  };
+
+  const handleAiExtractorSuccess = (result: AiExtractorResult) => {
+    const { orders, primaryDetails } = result;
+
+    if (orders.length > 0) {
+      const mappedOrders: CustomerRecord[] = orders.map((ord, i) => ({
+        sno: String(i + 1),
+        customerName: ord.customerName,
+        designation: ord.designation,
+        companyName: ord.companyName,
+        projectName: ord.projectName,
+        customerAddress: ord.customerAddress,
+        locationAddress: ord.customerAddress,
+        poNumber: ord.poNumber,
+        invoiceNumber: ord.invoiceNumber,
+        date: ord.date,
+        refType: ord.poNumber ? 'PO' : (ord.invoiceNumber ? 'Invoice' : ''),
+        refNumber: ord.poNumber || ord.invoiceNumber || '',
+        items: ord.items || [],
+      }));
+
+      setAvailableOrders(mappedOrders);
+      setSelectedOrderIndex(0);
+      setActiveOrderItems(mappedOrders[0].items || []);
+
+      if (mappedOrders[0].items && mappedOrders[0].items.length > 0) {
+        const hasOnlyBlank =
+          !formData.items ||
+          formData.items.length === 0 ||
+          (formData.items.length === 1 &&
+            !formData.items[0].description?.trim() &&
+            !formData.items[0].itemCode?.trim());
+        if (hasOnlyBlank) {
+          const autoRows: ProductItemRow[] = mappedOrders[0].items.map((ordItem) => {
+            const matchResult = matchOrderItemToCatalog(ordItem, catalog);
+            return {
+              itemCode: matchResult.itemCode,
+              description: matchResult.description,
+              productBrand: matchResult.productBrand,
+              warrantyPeriod: matchResult.warrantyPeriod,
+              qty: ordItem.qty || '',
+              isUnmatched: !matchResult.matched,
+            };
+          });
+          onChange({ items: autoRows });
+        }
+      }
+    }
+
+    applyExtractedDetails(primaryDetails, '✨ Extracted customer & order details with AI!');
+  };
+
+  const handleSelectCustomer = async (item: IndexedCustomerRecord) => {
+    const orders = item.orders && item.orders.length > 0 ? item.orders : [item.record];
+    const primaryRecord = orders[0];
+    setSelectedCustomer(primaryRecord);
+    setAvailableOrders(orders);
+    setSelectedOrderIndex(0);
+    setActiveOrderItems(primaryRecord.items || []);
+
+    // 1. Populate Customer Address cleanly in order: customerName, designation, companyName, projectName, customerAddress
     const addrLines: string[] = [];
     const addUnique = (val?: string) => {
       const trimmed = val?.trim();
@@ -261,68 +387,108 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       }
     };
 
-    addUnique(record.customerName);
-    addUnique(record.companyName);
-    addUnique(record.projectName);
-    addUnique(record.locationAddress);
+    addUnique(primaryRecord.customerName);
+    addUnique(primaryRecord.designation);
+    addUnique(primaryRecord.companyName);
+    addUnique(primaryRecord.projectName);
+
+    const rawAddr = primaryRecord.customerAddress || primaryRecord.locationAddress;
+    if (rawAddr) {
+      const splitLines = rawAddr.split('\n').map((l) => l.trim()).filter(Boolean);
+      for (const line of splitLines) {
+        addUnique(line);
+      }
+    }
 
     const cleanAddress = addrLines.join('\n');
 
     // 2. Set reference type and name based on priority: projectName -> companyName -> customerName
     let bestRefType: ReferenceTypeOption = 'companyName';
     let bestRefName = '';
-    if (record.projectName?.trim()) {
+    if (primaryRecord.projectName?.trim()) {
       bestRefType = 'projectName';
-      bestRefName = record.projectName.trim();
-    } else if (record.companyName?.trim()) {
+      bestRefName = primaryRecord.projectName.trim();
+    } else if (primaryRecord.companyName?.trim()) {
       bestRefType = 'companyName';
-      bestRefName = record.companyName.trim();
-    } else if (record.customerName?.trim()) {
+      bestRefName = primaryRecord.companyName.trim();
+    } else if (primaryRecord.customerName?.trim()) {
       bestRefType = 'customerName';
-      bestRefName = record.customerName.trim();
+      bestRefName = primaryRecord.customerName.trim();
     }
 
     // 3. PO or Invoice auto-fill (for Letter Type 2 or saved in state)
     let targetPoInvoiceType: PoInvoiceTypeOption = poInvoiceType;
     let targetPoNumber = formData.poNumber || '';
-    if (record.refType === 'PO' || record.refType === 'Invoice') {
-      targetPoInvoiceType = record.refType;
+    if (primaryRecord.refType === 'PO' || primaryRecord.refType === 'Invoice') {
+      targetPoInvoiceType = primaryRecord.refType;
     }
-    if (record.refNumber?.trim()) {
-      targetPoNumber = record.refNumber.trim();
+    if (primaryRecord.refNumber?.trim()) {
+      targetPoNumber = primaryRecord.refNumber.trim();
+    } else if (primaryRecord.poNumber?.trim()) {
+      targetPoInvoiceType = 'PO';
+      targetPoNumber = primaryRecord.poNumber.trim();
+    } else if (primaryRecord.invoiceNumber?.trim()) {
+      targetPoInvoiceType = 'Invoice';
+      targetPoNumber = primaryRecord.invoiceNumber.trim();
     }
 
-    setHasManuallyEditedReference(false);
-    onChange({
+    const formUpdates: Partial<WarrantyFormData> = {
       customerAddress: cleanAddress,
       referenceType: bestRefType,
       referenceName: bestRefName,
       poInvoiceType: targetPoInvoiceType,
       poNumber: targetPoNumber,
-    });
+    };
+
+    if (primaryRecord.items && primaryRecord.items.length > 0) {
+      const hasOnlyBlank =
+        !formData.items ||
+        formData.items.length === 0 ||
+        (formData.items.length === 1 &&
+          !formData.items[0].description?.trim() &&
+          !formData.items[0].itemCode?.trim());
+      if (hasOnlyBlank) {
+        formUpdates.items = primaryRecord.items.map((ordItem) => {
+          const matchResult = matchOrderItemToCatalog(ordItem, catalog);
+          return {
+            itemCode: matchResult.itemCode,
+            description: matchResult.description,
+            productBrand: matchResult.productBrand,
+            warrantyPeriod: matchResult.warrantyPeriod,
+            qty: ordItem.qty || '',
+            isUnmatched: !matchResult.matched,
+          };
+        });
+      }
+    }
+
+    setHasManuallyEditedReference(false);
+    onChange(formUpdates);
     setErrors((prev) => ({
       ...prev,
       customerAddress: undefined,
       referenceName: undefined,
       poNumber: undefined,
+      items: formUpdates.items ? undefined : prev.items,
     }));
 
     // Smart AI Auto-Extract on Dropdown Selection:
-    // Check if the selected record has raw/unstructured email content
-    if (isUnstructuredCustomerRecord(record)) {
+    // Check if the selected record has raw/unstructured email content and no items yet
+    if (isUnstructuredCustomerRecord(primaryRecord) && (!primaryRecord.items || primaryRecord.items.length === 0)) {
       setIsAiExtractingDropdown(true);
       try {
         const bodyParts = [
-          record.customerName,
-          record.companyName,
-          record.projectName,
-          record.locationAddress,
-          record.poNumber,
-          record.invoiceNumber,
+          primaryRecord.customerName,
+          primaryRecord.designation,
+          primaryRecord.companyName,
+          primaryRecord.projectName,
+          primaryRecord.customerAddress || primaryRecord.locationAddress,
+          primaryRecord.poNumber,
+          primaryRecord.invoiceNumber,
         ].filter(Boolean);
 
         const extracted = await parseCustomerWithAi({
-          subject: record.emailSubject?.trim() || undefined,
+          subject: primaryRecord.emailSubject?.trim() || undefined,
           bodyText: bodyParts.join('\n') || undefined,
         });
 
@@ -395,7 +561,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
   const handleAddItem = () => {
     onChange({
-      items: [...formData.items, { description: '', productBrand: '', warrantyPeriod: '' }],
+      items: [...formData.items, { description: '', productBrand: '', warrantyPeriod: '', qty: '' }],
     });
   };
 
@@ -427,6 +593,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
               : catalogItem.itemName || catalogItem.itemCode,
           productBrand: match.productBrand,
           warrantyPeriod: match.warrantyPeriod,
+          isUnmatched: false,
         };
       }
       return item;
@@ -451,8 +618,8 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
         noteOption: 'withNote',
         noteContent: 'All electrical accessories must be installed by certified Kevilton electricians.',
         items: [
-          { description: 'KEV-DB-08 - Distribution Boards & Enclosures 8-Way', productBrand: 'Circuit Protection Devices', warrantyPeriod: '10 Years' },
-          { description: 'KEV-MOD-01 - Modular Switches and Socket Outlets', productBrand: 'Wiring Devices', warrantyPeriod: '5 Years' },
+          { description: 'KEV-DB-08 - Distribution Boards & Enclosures 8-Way', productBrand: 'Circuit Protection Devices', warrantyPeriod: '10 Years', qty: '10 Nos' },
+          { description: 'KEV-MOD-01 - Modular Switches and Socket Outlets', productBrand: 'Wiring Devices', warrantyPeriod: '5 Years', qty: '50 Nos' },
         ],
         wordingOverrides: undefined,
       });
@@ -466,8 +633,8 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
         noteOption: 'withoutNote',
         noteContent: '',
         items: [
-          { description: 'KEV-SW-101 - 1 Gang 1 Way Switch 10A White', productBrand: 'Wiring Devices', warrantyPeriod: '5 Years' },
-          { description: 'KEV-SK-202 - 13A Switched Socket Outlet Single', productBrand: 'Wiring Devices', warrantyPeriod: '2 Years' },
+          { description: 'KEV-SW-101 - 1 Gang 1 Way Switch 10A White', productBrand: 'Wiring Devices', warrantyPeriod: '5 Years', qty: '100 Nos' },
+          { description: 'KEV-SK-202 - 13A Switched Socket Outlet Single', productBrand: 'Wiring Devices', warrantyPeriod: '2 Years', qty: '80 Nos' },
         ],
         wordingOverrides: undefined,
       });
@@ -477,6 +644,10 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
 
   const handleReset = () => {
     setHasManuallyEditedReference(false);
+    setSelectedCustomer(null);
+    setAvailableOrders([]);
+    setSelectedOrderIndex(0);
+    setActiveOrderItems([]);
     onChange({
       customerAddress: '',
       date: new Date().toISOString().split('T')[0],
@@ -486,7 +657,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
       poNumber: '',
       noteOption: 'withoutNote',
       noteContent: '',
-      items: [{ description: '', productBrand: '', warrantyPeriod: '' }],
+      items: [{ description: '', productBrand: '', warrantyPeriod: '', qty: '' }],
       wordingOverrides: undefined,
     });
     setErrors({});
@@ -645,28 +816,37 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
               </div>
             </div>
 
-            {/* Compact AI Paste Button */}
-            <button
-              type="button"
-              onClick={() => setIsAiBoxOpen((prev) => !prev)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl border transition-all cursor-pointer shadow-2xs self-start sm:self-auto select-none ${
-                isAiBoxOpen
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-blue-500/20'
-                  : 'bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 hover:text-blue-800 border-blue-200/90 hover:border-blue-300 hover:bg-blue-100/70'
-              }`}
-            >
-              <Sparkles className={`w-3.5 h-3.5 ${isAiBoxOpen ? 'text-white' : 'text-blue-600'}`} />
-              <span>{isAiBoxOpen ? 'Close AI Extractor' : '✨ Paste Email / Image'}</span>
-            </button>
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              {/* Refresh Customer DB Button */}
+              <button
+                type="button"
+                onClick={handleRefreshDb}
+                disabled={isRefreshingDb}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 rounded-xl transition-all cursor-pointer border border-slate-200/80 disabled:opacity-50"
+                title="Reload latest records from Customer Excel database"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 text-slate-600 ${isRefreshingDb ? 'animate-spin' : ''}`} />
+                <span>{isRefreshingDb ? 'Refreshing...' : 'Refresh DB'}</span>
+              </button>
+
+              {/* AI Quick Extract Button */}
+              <button
+                type="button"
+                onClick={() => setIsAiBoxOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl border transition-all cursor-pointer shadow-2xs select-none bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 hover:text-blue-800 border-blue-200/90 hover:border-blue-300 hover:bg-blue-100/70"
+                title="Extract customer, orders, and items using Gemini AI"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                <span>✨ AI Quick Extract</span>
+              </button>
+            </div>
           </div>
 
-          {/* AI Extractor Collapsible Box */}
+          {/* AI Extractor Modal */}
           <AiCustomerExtractor
             isOpen={isAiBoxOpen}
             onClose={() => setIsAiBoxOpen(false)}
-            onSuccess={(data) => {
-              applyExtractedDetails(data, '✨ Details extracted & auto-filled from email/screenshot!');
-            }}
+            onSuccess={handleAiExtractorSuccess}
           />
 
           {/* Inline Loading Indicator for Dropdown AI extraction */}
@@ -841,6 +1021,59 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
               </div>
             </div>
 
+            {/* Multi-Order PO / Invoice Selector */}
+            {availableOrders.length > 1 && (
+              <div className="p-3.5 bg-blue-50/80 border border-blue-200/90 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                    Orders from Customer Mail Group ({availableOrders.length} orders):
+                  </span>
+                  <span className="text-[11px] font-semibold text-blue-700 bg-blue-100/90 px-2 py-0.5 rounded-full">
+                    Order #{selectedOrderIndex + 1} Selected
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {availableOrders.map((ord, idx) => {
+                    const isSelected = selectedOrderIndex === idx;
+                    const poPart = ord.poNumber?.trim() ? `PO: ${ord.poNumber.trim()}` : '';
+                    const invPart = ord.invoiceNumber?.trim() ? `INV: ${ord.invoiceNumber.trim()}` : '';
+                    const docText =
+                      [poPart, invPart].filter(Boolean).join(' | ') ||
+                      (ord.refNumber ? `Ref: ${ord.refNumber}` : `Order #${idx + 1}`);
+                    const itemCount =
+                      ord.items && ord.items.length > 0 ? `${ord.items.length} items` : 'No items';
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleSelectOrder(idx)}
+                        className={`text-left p-2.5 rounded-lg border text-xs transition-all cursor-pointer flex items-center justify-between ${
+                          isSelected
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs font-semibold'
+                            : 'bg-white text-slate-700 border-slate-200 hover:border-blue-300 hover:bg-blue-50/50'
+                        }`}
+                      >
+                        <span className="truncate">
+                          <strong className={isSelected ? 'text-blue-100' : 'text-slate-900'}>
+                            #{idx + 1}
+                          </strong>{' '}
+                          — {docText}
+                        </span>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded ml-2 shrink-0 ${
+                            isSelected ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {itemCount}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* PO Number vs Invoice Number toggle buttons */}
             <div className="grid grid-cols-2 gap-3">
               <label
@@ -915,7 +1148,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
         {/* STEP 5: PRODUCT ITEMS TABLE                                  */}
         {/* ============================================================ */}
         <div ref={itemsSectionRef}>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
                 <Package className="w-5 h-5 stroke-[2.2]" />
@@ -927,14 +1160,27 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleAddItem}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer border border-blue-200/60"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add Row
-            </button>
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              {activeOrderItems && activeOrderItems.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleAutoFillItemsFromOrder}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer border border-emerald-200/80 shadow-2xs"
+                  title="Auto-fill table with items from selected order"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Auto-Fill {activeOrderItems.length} Items from Order</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleAddItem}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer border border-blue-200/60"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Row
+              </button>
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -949,14 +1195,30 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                   </div>
 
                   <div className="flex-1">
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Product Description <span className="text-red-500">*</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-slate-700">
+                        Product Description <span className="text-red-500">*</span>
+                      </label>
+                      {item.isUnmatched && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.5 rounded">
+                          <AlertCircle className="w-3 h-3 text-amber-600 shrink-0" />
+                          Unmatched — check warranty
+                        </span>
+                      )}
+                    </div>
                     <ProductDescriptionAutocomplete
                       inputRef={index === 0 ? firstItemInputRef : undefined}
                       value={item.description || ''}
                       catalog={catalog}
-                      onChange={(val) => handleItemChange(index, 'description', val)}
+                      onChange={(val) => {
+                        handleItemChange(index, 'description', val);
+                        if (item.isUnmatched) {
+                          const updated = formData.items.map((it, i) =>
+                            i === index ? { ...it, isUnmatched: false } : it
+                          );
+                          onChange({ items: updated });
+                        }
+                      }}
                       onSelect={(catalogItem, match) => handleSelectCatalogItem(index, catalogItem, match)}
                       placeholder="Enter Item Code or Item Name"
                     />
@@ -974,7 +1236,7 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                   )}
                 </div>
 
-                <div className="pl-10 grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200/60">
+                <div className="pl-10 grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200/60">
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">
                       Product Brand <span className="text-red-500">*</span>
@@ -997,6 +1259,19 @@ export const WarrantyForm: React.FC<WarrantyFormProps> = ({
                       value={item.warrantyPeriod || ''}
                       onChange={(e) => handleItemChange(index, 'warrantyPeriod', e.target.value)}
                       placeholder="e.g. 5 Years"
+                      className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                      Quantity <span className="text-slate-400 font-normal">(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={item.qty || ''}
+                      onChange={(e) => handleItemChange(index, 'qty', e.target.value)}
+                      placeholder="e.g. 10 Nos"
                       className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-xs"
                     />
                   </div>
